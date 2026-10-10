@@ -1,5 +1,5 @@
 [project]
-name = "pybox"
+name = "wheelship"
 version = "0.1.0.dev0"
 description = "Build relocatable Python application bundles for Linux, Windows and AWS Lambda"
 readme = "README.md"
@@ -13,13 +13,13 @@ dependencies = [
 ]
 
 [project.scripts]
-pybox = "pybox.cli:main"
+wheelship = "wheelship.cli:main"
 
 [build-system]
 requires = ["hatchling>=1.26"]
 build-backend = "hatchling.build"
 
 [tool.hatch.build.targets.wheel]
-packages = ["src/pybox"]
+packages = ["src/wheelship"]
 # Launchers are git-ignored build outputs placed by CI; include them explicitly.
-artifacts = ["src/pybox/_launchers/**"]
+artifacts = ["src/wheelship/_launchers/**"]

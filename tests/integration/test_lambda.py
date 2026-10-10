@@ -10,10 +10,10 @@ from pathlib import Path
 
 import pytest
 
-from pybox.bytecode import find_interpreter
-from pybox.cli import main
-from pybox.target import make_target
 from tests.conftest import FIXTURES
+from wheelship.bytecode import find_interpreter
+from wheelship.cli import main
+from wheelship.target import make_target
 
 APP = FIXTURES / "apps" / "lambda_app"
 pytestmark = pytest.mark.network

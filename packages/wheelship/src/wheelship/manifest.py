@@ -1,4 +1,4 @@
-"""``pybox.json`` and entry-point code generation."""
+"""``wheelship.json`` and entry-point code generation."""
 
 from __future__ import annotations
 
@@ -60,7 +60,7 @@ def build(
     gui_interpreter: str | None,
     python_flags: Sequence[str],
     entry_points: Sequence[EntryPoint],
-    pybox_version: str,
+    wheelship_version: str,
 ) -> dict[str, Any]:
     return {
         "schema": SCHEMA,
@@ -82,7 +82,7 @@ def build(
         },
         "default_entry_point": default_entry_point(app_name, entry_points),
         "target": {"name": str(target), "platform": target.platform_name},
-        "build": {"tool": f"pybox {pybox_version}"},
+        "build": {"tool": f"wheelship {wheelship_version}"},
     }
 
 

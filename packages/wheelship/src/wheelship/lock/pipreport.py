@@ -43,7 +43,7 @@ def pip_command(target: Target, requirements: Sequence[str], report: Path) -> li
 def resolve(target: Target, requirements: Sequence[str]) -> list[Artifact]:
     if not requirements:
         return []
-    with tempfile.TemporaryDirectory(prefix="pybox-pip-") as tmp:
+    with tempfile.TemporaryDirectory(prefix="wheelship-pip-") as tmp:
         report = Path(tmp) / "report.json"
         cmd = pip_command(target, requirements, report)
         env = dict(os.environ, PIP_DISABLE_PIP_VERSION_CHECK="1")
@@ -56,7 +56,7 @@ def resolve(target: Target, requirements: Sequence[str]) -> list[Artifact]:
                 raise ResolveError(
                     "no lock file is configured and pip is not available to resolve "
                     "dependencies; create one with `uv export --format pylock.toml --no-dev "
-                    "-o pylock.toml` (or `pip lock`) and set [tool.pybox].lock"
+                    "-o pylock.toml` (or `pip lock`) and set [tool.wheelship].lock"
                 )
             raise ResolveError(f"pip failed to resolve for {target}:\n{proc.stderr.strip()}")
         return parse_report(json.loads(report.read_text(encoding="utf-8")))

@@ -7,8 +7,8 @@ import pytest
 from packaging.markers import Marker
 from packaging.tags import Tag, sys_tags
 
-from pybox.errors import ConfigError
-from pybox.target import Target, make_target
+from wheelship.errors import ConfigError
+from wheelship.target import Target, make_target
 
 
 def test_linux_tags_order_and_bounds() -> None:

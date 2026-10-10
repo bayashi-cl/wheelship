@@ -141,7 +141,7 @@ def install_wheels(
                 install(
                     source,
                     destination,
-                    additional_metadata={"INSTALLER": f"pybox {__version__}\n".encode()},
+                    additional_metadata={"INSTALLER": f"wheelship {__version__}\n".encode()},
                 )
         except FileExistsError as e:
             raise BuildError(f"{wheel.path.name}: file conflicts with another package: {e}") from e

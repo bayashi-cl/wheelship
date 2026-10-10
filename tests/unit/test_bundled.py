@@ -10,13 +10,13 @@ from pathlib import Path
 
 import pytest
 
-from pybox import launchers, manifest, pbs, reproducible
-from pybox.errors import BuildError, ConfigError
-from pybox.install import flat_scheme, install_wheels
-from pybox.lock import Artifact
-from pybox.target import make_target
-from pybox.wheels import Wheel, entry_points
 from tests.conftest import MakeWheel
+from wheelship import launchers, manifest, pbs, reproducible
+from wheelship.errors import BuildError, ConfigError
+from wheelship.install import flat_scheme, install_wheels
+from wheelship.lock import Artifact
+from wheelship.target import make_target
+from wheelship.wheels import Wheel, entry_points
 
 R = "20261009"
 SUMS = {
@@ -54,7 +54,7 @@ def test_asset_url_honors_mirror(monkeypatch: pytest.MonkeyPatch) -> None:
     assert asset.url.startswith(
         f"https://github.com/astral-sh/python-build-standalone/releases/download/{R}/"
     )
-    monkeypatch.setenv("PYBOX_PBS_MIRROR", "https://mirror.example/pbs/")
+    monkeypatch.setenv("WHEELSHIP_PBS_MIRROR", "https://mirror.example/pbs/")
     assert asset.url == f"https://mirror.example/pbs/{R}/{asset.name}"
 
 
@@ -62,7 +62,7 @@ def test_resolve_pins_and_reuses_lock(tmp_path: Path, monkeypatch: pytest.Monkey
     calls: list[str] = []
     monkeypatch.setattr(pbs, "latest_release", lambda: calls.append("latest") or R)
     monkeypatch.setattr(pbs, "release_sums", lambda r: calls.append(f"sums:{r}") or SUMS)
-    lock = tmp_path / "pybox.lock"
+    lock = tmp_path / "wheelship.lock"
 
     asset = pbs.resolve(pbs.PbsConfig(), (3, 12), LINUX, lock)
     assert asset.version == (3, 12, 15)
@@ -73,7 +73,7 @@ def test_resolve_pins_and_reuses_lock(tmp_path: Path, monkeypatch: pytest.Monkey
     calls.clear()
     again = pbs.resolve(pbs.PbsConfig(), (3, 12), LINUX, lock)
     assert again == asset
-    assert calls == []  # fully served from pybox.lock: no network
+    assert calls == []  # fully served from wheelship.lock: no network
 
     # A different target adds a second pinned asset to the same release.
     pbs.resolve(pbs.PbsConfig(), (3, 12), "x86_64-pc-windows-msvc", lock)
@@ -90,7 +90,7 @@ def test_resolve_pins_and_reuses_lock(tmp_path: Path, monkeypatch: pytest.Monkey
 
 def test_lock_roundtrip(tmp_path: Path) -> None:
     lock = pbs.Lock(R, {"b.tar.gz": "2" * 64, "a.tar.gz": "1" * 64})
-    path = tmp_path / "pybox.lock"
+    path = tmp_path / "wheelship.lock"
     lock.save(path)
     assert pbs.Lock.load(path) == lock
     assert path.read_text().index("a.tar.gz") < path.read_text().index("b.tar.gz")
@@ -149,22 +149,22 @@ def test_layout() -> None:
 def test_launcher_lookup(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(launchers, "_PACKAGE_DIR", tmp_path / "pkg")
     monkeypatch.setattr(launchers, "_repo_target_dir", lambda: None)
-    monkeypatch.delenv("PYBOX_LAUNCHER_DIR", raising=False)
+    monkeypatch.delenv("WHEELSHIP_LAUNCHER_DIR", raising=False)
     win = make_target("windows-x86_64", "3.12")
     with pytest.raises(BuildError, match="no gui launcher for x86_64-pc-windows-msvc"):
         launchers.find(win, "gui")
 
-    packaged = tmp_path / "pkg" / "x86_64-pc-windows-msvc" / "pybox-launcher-gui.exe"
+    packaged = tmp_path / "pkg" / "x86_64-pc-windows-msvc" / "wheelship-launcher-gui.exe"
     packaged.parent.mkdir(parents=True)
     packaged.write_text("")
     assert launchers.find(win, "gui") == packaged
 
-    override = tmp_path / "env" / "x86_64-pc-windows-msvc" / "pybox-launcher-gui.exe"
+    override = tmp_path / "env" / "x86_64-pc-windows-msvc" / "wheelship-launcher-gui.exe"
     override.parent.mkdir(parents=True)
     override.write_text("")
-    monkeypatch.setenv("PYBOX_LAUNCHER_DIR", str(tmp_path / "env"))
+    monkeypatch.setenv("WHEELSHIP_LAUNCHER_DIR", str(tmp_path / "env"))
     assert launchers.find(win, "gui") == override
-    assert launchers.binary_name(make_target("linux-x86_64", "3.12"), "gui") == "pybox-launcher"
+    assert launchers.binary_name(make_target("linux-x86_64", "3.12"), "gui") == "wheelship-launcher"
 
 
 def test_entry_code() -> None:
@@ -189,7 +189,7 @@ def test_manifest_document() -> None:
         gui_interpreter="python/pythonw.exe",
         python_flags=["-I"],
         entry_points=eps,
-        pybox_version="0",
+        wheelship_version="0",
     )
     assert doc["schema"] == 1
     assert doc["default_entry_point"] == "tool-cli"  # no script named like the app: first console
@@ -265,7 +265,7 @@ def test_tar_gz_deterministic_with_symlinks(tmp_path: Path) -> None:
     (root / "python" / "bin" / "python3.12").write_text("elf")
     (root / "python" / "bin" / "python3").symlink_to("python3.12")
     (root / "app").write_text("launcher")
-    (root / "pybox.json").write_text("{}")
+    (root / "wheelship.json").write_text("{}")
     a, b = tmp_path / "a.tar.gz", tmp_path / "b.tar.gz"
 
     def exe(rel: str) -> bool:
@@ -278,13 +278,13 @@ def test_tar_gz_deterministic_with_symlinks(tmp_path: Path) -> None:
     with tarfile.open(a) as tf:
         members = {m.name: m for m in tf.getmembers()}
     assert list(members) == [
-        "bundle", "bundle/app", "bundle/pybox.json", "bundle/python",
+        "bundle", "bundle/app", "bundle/wheelship.json", "bundle/python",
         "bundle/python/bin", "bundle/python/bin/python3", "bundle/python/bin/python3.12",
     ]  # fmt: skip
     link = members["bundle/python/bin/python3"]
     assert link.issym() and link.linkname == "python3.12"
     assert members["bundle/app"].mode == 0o755
-    assert members["bundle/pybox.json"].mode == 0o644
+    assert members["bundle/wheelship.json"].mode == 0o644
     assert {m.uid for m in members.values()} == {0} and {m.mtime for m in members.values()} == {
         reproducible.source_date_epoch()
     }

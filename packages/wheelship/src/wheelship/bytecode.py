@@ -15,18 +15,18 @@ import sys
 from pathlib import Path
 
 from . import log
-from .errors import PyboxError
+from .errors import WheelshipError
 from .target import Target
 
 
 def find_interpreter(target: Target) -> str | None:
     """Locate a host CPython matching ``target``'s minor version.
 
-    Order: ``PYBOX_BYTECODE_PYTHON``, the running interpreter, ``uv python find``,
+    Order: ``WHEELSHIP_BYTECODE_PYTHON``, the running interpreter, ``uv python find``,
     and finally a python-build-standalone build for the host (downloaded once).
     """
     want = target.python[:2]
-    if env := os.environ.get("PYBOX_BYTECODE_PYTHON"):
+    if env := os.environ.get("WHEELSHIP_BYTECODE_PYTHON"):
         return env
     if sys.implementation.name == "cpython" and sys.version_info[:2] == want:
         return sys.executable
@@ -42,7 +42,7 @@ def find_interpreter(target: Target) -> str | None:
         from . import pbs
 
         return str(pbs.host_interpreter(want))
-    except PyboxError as e:
+    except WheelshipError as e:
         log.debug(f"no host python-build-standalone: {e}")
     return None
 
@@ -63,7 +63,7 @@ def compile_tree(
     if python is None:
         log.warn(
             f"no CPython {target.python_minor} found on the host; skipping bytecode compilation "
-            "(set PYBOX_BYTECODE_PYTHON or install one with `uv python install`)"
+            "(set WHEELSHIP_BYTECODE_PYTHON or install one with `uv python install`)"
         )
         return False
     cmd = [

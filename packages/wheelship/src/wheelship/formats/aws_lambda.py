@@ -67,7 +67,7 @@ def build_zip(ctx: BuildContext) -> Path:
 
     handler = ctx.cfg.lambda_.handler
     if handler is None:
-        log.warn("[tool.pybox.lambda].handler is not set; the handler cannot be validated")
+        log.warn("[tool.wheelship.lambda].handler is not set; the handler cannot be validated")
     else:
         module, func = lambda_handler(handler)
         if not _module_exists(stage, module, ctx.target.ext_suffix):

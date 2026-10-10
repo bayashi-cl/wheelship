@@ -64,8 +64,8 @@ def sha256(path: Path) -> str:
 
 
 def pytest_collection_modifyitems(config: pytest.Config, items: list[pytest.Item]) -> None:
-    if os.environ.get("PYBOX_OFFLINE") == "1":
-        skip = pytest.mark.skip(reason="PYBOX_OFFLINE=1")
+    if os.environ.get("WHEELSHIP_OFFLINE") == "1":
+        skip = pytest.mark.skip(reason="WHEELSHIP_OFFLINE=1")
         for item in items:
             if "network" in item.keywords:
                 item.add_marker(skip)

@@ -1,23 +1,23 @@
 [package]
-name = "pybox-launcher"
+name = "wheelship-launcher"
 version = "0.1.0"
 edition.workspace = true
 license.workspace = true
 publish.workspace = true
 
 [lib]
-name = "pybox_launcher"
+name = "wheelship_launcher"
 path = "src/lib.rs"
 
 # Console launcher (all platforms).
 [[bin]]
-name = "pybox-launcher"
+name = "wheelship-launcher"
 path = "src/main.rs"
 
 # Windows GUI-subsystem launcher for gui_scripts (no console window).
 # On Linux it is identical to the console launcher.
 [[bin]]
-name = "pybox-launcher-gui"
+name = "wheelship-launcher-gui"
 path = "src/gui.rs"
 
 [dependencies]

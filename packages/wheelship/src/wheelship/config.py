@@ -1,4 +1,4 @@
-"""Load ``pyproject.toml`` (``[project]`` + ``[tool.pybox]``)."""
+"""Load ``pyproject.toml`` (``[project]`` + ``[tool.wheelship]``)."""
 
 from __future__ import annotations
 
@@ -67,7 +67,7 @@ class ProjectConfig:
 
     @property
     def pbs_lock(self) -> Path:
-        return self.root / "pybox.lock"
+        return self.root / "wheelship.lock"
 
     def target(self, name: str) -> TargetConfig:
         for t in self.targets:
@@ -126,16 +126,16 @@ def parse(data: dict[str, Any], root: Path) -> ProjectConfig:
         for extra, reqs in optional_table.items()
     }
 
-    tool = _table(data.get("tool", {}), "pybox", "tool", required=False)
-    _check_keys(tool, _TOOL_KEYS, "[tool.pybox]")
+    tool = _table(data.get("tool", {}), "wheelship", "tool", required=False)
+    _check_keys(tool, _TOOL_KEYS, "[tool.wheelship]")
 
     python = tool.get("python")
     if python is not None:
-        python = _str(python, "tool.pybox.python")
-    default_interp = _interpreter(tool.get("interpreter", "bundled"), "tool.pybox.interpreter")
+        python = _str(python, "tool.wheelship.python")
+    default_interp = _interpreter(tool.get("interpreter", "bundled"), "tool.wheelship.interpreter")
 
-    lam = _table(tool, "lambda", "tool.pybox", required=False)
-    _check_keys(lam, _LAMBDA_KEYS, "[tool.pybox.lambda]")
+    lam = _table(tool, "lambda", "tool.wheelship", required=False)
+    _check_keys(lam, _LAMBDA_KEYS, "[tool.wheelship.lambda]")
     lambda_cfg = LambdaConfig(
         handler=_str(lam["handler"], "lambda.handler") if "handler" in lam else None,
         layer_include_app=bool(lam.get("layer-include-app", False)),
@@ -143,11 +143,11 @@ def parse(data: dict[str, Any], root: Path) -> ProjectConfig:
 
     targets = tuple(
         _parse_target(t, i, python, default_interp, requires_python)
-        for i, t in enumerate(_list(tool.get("target", []), "tool.pybox.target"))
+        for i, t in enumerate(_list(tool.get("target", []), "tool.wheelship.target"))
     )
     names = [t.name for t in targets]
     if len(set(names)) != len(names):
-        raise ConfigError(f"duplicate target names in [[tool.pybox.target]]: {names}")
+        raise ConfigError(f"duplicate target names in [[tool.wheelship.target]]: {names}")
 
     groups = tool.get("groups")
     return ProjectConfig(
@@ -157,34 +157,35 @@ def parse(data: dict[str, Any], root: Path) -> ProjectConfig:
         requires_python=requires_python,
         dependencies=dependencies,
         optional_dependencies=optional,
-        lock=(root / _str(tool["lock"], "tool.pybox.lock")) if "lock" in tool else None,
+        lock=(root / _str(tool["lock"], "tool.wheelship.lock")) if "lock" in tool else None,
         python=python,
-        extras=tuple(_strs(tool.get("extras", []), "tool.pybox.extras")),
-        groups=None if groups is None else tuple(_strs(groups, "tool.pybox.groups")),
+        extras=tuple(_strs(tool.get("extras", []), "tool.wheelship.extras")),
+        groups=None if groups is None else tuple(_strs(groups, "tool.wheelship.groups")),
         compile_bytecode=bool(tool.get("compile-bytecode", True)),
-        python_flags=tuple(_strs(tool.get("python-flags", ["-I"]), "tool.pybox.python-flags")),
-        prune=tuple(_strs(tool.get("prune", []), "tool.pybox.prune")),
+        python_flags=tuple(_strs(tool.get("python-flags", ["-I"]), "tool.wheelship.python-flags")),
+        prune=tuple(_strs(tool.get("prune", []), "tool.wheelship.prune")),
         find_links=tuple(root / p for p in _strs(tool.get("find-links", []), "find-links")),
         targets=targets,
         lambda_=lambda_cfg,
-        pbs=_parse_pbs(_table(tool, "pbs", "tool.pybox", required=False)),
+        pbs=_parse_pbs(_table(tool, "pbs", "tool.wheelship", required=False)),
     )
 
 
 def _parse_pbs(raw: dict[str, Any]) -> PbsConfig:
-    _check_keys(raw, _PBS_KEYS, "[tool.pybox.pbs]")
+    _check_keys(raw, _PBS_KEYS, "[tool.wheelship.pbs]")
     cfg = PbsConfig()
     release = raw.get("release")
     if release is not None and not (isinstance(release, str) and release.isdigit()):
-        raise ConfigError("[tool.pybox.pbs].release must be a release tag such as '20261009'")
+        raise ConfigError("[tool.wheelship.pbs].release must be a release tag such as '20261009'")
     flavor = raw.get("flavor", cfg.flavor)
     if flavor not in FLAVORS:
-        raise ConfigError(f"[tool.pybox.pbs].flavor must be one of {', '.join(FLAVORS)}")
-    strip = tuple(_strs(raw.get("strip", list(cfg.strip)), "tool.pybox.pbs.strip"))
+        raise ConfigError(f"[tool.wheelship.pbs].flavor must be one of {', '.join(FLAVORS)}")
+    strip = tuple(_strs(raw.get("strip", list(cfg.strip)), "tool.wheelship.pbs.strip"))
     for group in strip:
         if group not in STRIP_GROUPS:
             raise ConfigError(
-                f"unknown [tool.pybox.pbs].strip group {group!r} (known: {', '.join(STRIP_GROUPS)})"
+                f"unknown [tool.wheelship.pbs].strip group {group!r} "
+                f"(known: {', '.join(STRIP_GROUPS)})"
             )
     return PbsConfig(release=release, flavor=flavor, strip=strip)
 
@@ -203,7 +204,7 @@ def make_target_config(
     if python is None:
         raise ConfigError(
             f"target {name!r}: Python version is not set "
-            "(set [tool.pybox].python or the target's python)"
+            "(set [tool.wheelship].python or the target's python)"
         )
     target = make_target(platform, python, glibc=glibc)
     version = ".".join(map(str, target.python))
@@ -231,7 +232,7 @@ def _parse_target(
     default_interp: Interpreter,
     requires_python: SpecifierSet | None,
 ) -> TargetConfig:
-    where = f"[[tool.pybox.target]] #{index + 1}"
+    where = f"[[tool.wheelship.target]] #{index + 1}"
     if not isinstance(raw, dict):
         raise ConfigError(f"{where} must be a table")
     _check_keys(raw, _TARGET_KEYS, where)

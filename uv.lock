@@ -8,13 +8,13 @@ resolution-markers = [
 
 [manifest]
 members = [
-    "pybox",
+    "wheelship",
 ]
 
 [manifest.dependency-groups]
 dev = [
     { name = "mypy", specifier = ">=1.11" },
-    { name = "pybox", editable = "packages/pybox" },
+    { name = "wheelship", editable = "packages/wheelship" },
     { name = "pytest", specifier = ">=8" },
     { name = "ruff", specifier = ">=0.6" },
 ]
@@ -337,9 +337,9 @@ wheels = [
 ]
 
 [[package]]
-name = "pybox"
+name = "wheelship"
 version = "0.1.0.dev0"
-source = { editable = "packages/pybox" }
+source = { editable = "packages/wheelship" }
 dependencies = [
     { name = "build" },
     { name = "installer" },

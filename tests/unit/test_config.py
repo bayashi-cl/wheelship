@@ -6,8 +6,8 @@ from typing import Any
 
 import pytest
 
-from pybox import config
-from pybox.errors import ConfigError
+from wheelship import config
+from wheelship.errors import ConfigError
 
 BASE = """
 [project]
@@ -28,19 +28,19 @@ def parse(extra: str, tmp_path: Path) -> config.ProjectConfig:
 def test_full_config(tmp_path: Path) -> None:
     cfg = parse(
         """
-[tool.pybox]
+[tool.wheelship]
 lock = "pylock.toml"
 python = "3.12"
 prune = ["**/tests/**"]
-[[tool.pybox.target]]
+[[tool.wheelship.target]]
 name = "fn"
 platform = "lambda-arm64"
 formats = ["lambda-zip", "lambda-layer"]
-[[tool.pybox.target]]
+[[tool.wheelship.target]]
 name = "old"
 platform = "lambda-x86_64"
 python = "3.11"
-[tool.pybox.lambda]
+[tool.wheelship.lambda]
 handler = "my_app.h:handler"
 """,
         tmp_path,
@@ -63,35 +63,38 @@ handler = "my_app.h:handler"
 @pytest.mark.parametrize(
     ("extra", "message"),
     [
-        ("[tool.pybox]\npyhton = '3.12'", "unknown key"),
-        ("[[tool.pybox.target]]\nname='a'\nplatform='lambda-x86_64'", "Python version is not set"),
+        ("[tool.wheelship]\npyhton = '3.12'", "unknown key"),
         (
-            "[tool.pybox]\npython='3.10'\n[[tool.pybox.target]]\nname='a'\nplatform='lambda-x86_64'",
+            "[[tool.wheelship.target]]\nname='a'\nplatform='lambda-x86_64'",
+            "Python version is not set",
+        ),
+        (
+            "[tool.wheelship]\npython='3.10'\n[[tool.wheelship.target]]\nname='a'\nplatform='lambda-x86_64'",
             "requires-python",
         ),
         (
-            "[tool.pybox]\npython='3.12'\n[[tool.pybox.target]]\nname='a'\n"
+            "[tool.wheelship]\npython='3.12'\n[[tool.wheelship.target]]\nname='a'\n"
             "platform='linux-x86_64'\nformats=['lambda-zip']",
             "requires a lambda",
         ),
         (
-            "[tool.pybox]\npython='3.12'\n[[tool.pybox.target]]\nname='a'\n"
+            "[tool.wheelship]\npython='3.12'\n[[tool.wheelship.target]]\nname='a'\n"
             "platform='lambda-x86_64'\ninterpreter='bundled'",
             "interpreter = 'system'",
         ),
         (
-            "[tool.pybox]\npython='3.12'\n[[tool.pybox.target]]\nname='a'\n"
+            "[tool.wheelship]\npython='3.12'\n[[tool.wheelship.target]]\nname='a'\n"
             "platform='lambda-x86_64'\nformats=['zipapp']",
             "unknown format",
         ),
         (
-            "[tool.pybox]\npython='3.12'\n[[tool.pybox.target]]\nname='a'\n"
+            "[tool.wheelship]\npython='3.12'\n[[tool.wheelship.target]]\nname='a'\n"
             "platform='linux-x86_64'\nformats=['exe']",
             "not implemented",
         ),
         (
-            "[tool.pybox]\npython='3.12'\n[[tool.pybox.target]]\nname='a'\nplatform='lambda-arm64'"
-            "\n[[tool.pybox.target]]\nname='a'\nplatform='lambda-x86_64'",
+            "[tool.wheelship]\npython='3.12'\n[[tool.wheelship.target]]\nname='a'\nplatform='lambda-arm64'"
+            "\n[[tool.wheelship.target]]\nname='a'\nplatform='lambda-x86_64'",
             "duplicate",
         ),
     ],

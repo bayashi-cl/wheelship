@@ -13,11 +13,11 @@ from pathlib import Path
 
 import pytest
 
-from pybox import launchers, pbs
-from pybox.cli import main
-from pybox.errors import BuildError
-from pybox.target import make_target
 from tests.conftest import FIXTURES
+from wheelship import launchers, pbs
+from wheelship.cli import main
+from wheelship.errors import BuildError
+from wheelship.target import make_target
 
 APP = FIXTURES / "apps" / "cli_app"
 STEM = "cli-app-0.2.0"
@@ -60,15 +60,15 @@ def test_layout(linux_dist: Path) -> None:
     assert sorted(p.name for p in bundle.iterdir()) == [
         "cli-app",
         "cli-app-gui",
-        "pybox.json",
         "python",
+        "wheelship.json",
     ]
     py = bundle / "python"
     assert (py / "bin" / "python3.12").is_file()
     assert not list(py.glob("lib/python3.12/site-packages/pip*"))
     assert not (py / "lib" / "python3.12" / "ensurepip").exists()
     assert not (py / "include").exists()  # "dev" strip group
-    manifest = json.loads((bundle / "pybox.json").read_text())
+    manifest = json.loads((bundle / "wheelship.json").read_text())
     assert manifest["interpreter"]["path"] == "python/bin/python3.12"
     assert manifest["default_entry_point"] == "cli-app"
 
@@ -103,18 +103,18 @@ def test_runs_relocated(linux_dist: Path, tmp_path: Path) -> None:
 
 def test_boot_and_debug(linux_dist: Path) -> None:
     exe = linux_dist / f"{STEM}-linux" / "cli-app"
-    proc = run(exe, "-c", "import sys; print(sys.prefix)", PYBOX_BOOT="python")
+    proc = run(exe, "-c", "import sys; print(sys.prefix)", WHEELSHIP_BOOT="python")
     assert proc.stdout.strip() == str(exe.parent / "python")
-    proc = run(exe, PYBOX_DEBUG="1")
-    assert "pybox-launcher: exec" in proc.stderr
+    proc = run(exe, WHEELSHIP_DEBUG="1")
+    assert "wheelship-launcher: exec" in proc.stderr
 
 
 def test_launcher_errors(linux_dist: Path, tmp_path: Path) -> None:
     bundle = tmp_path / "b"
     shutil.copytree(linux_dist / f"{STEM}-linux", bundle, symlinks=True)
-    (bundle / "pybox.json").write_text('{"schema": 99}')
+    (bundle / "wheelship.json").write_text('{"schema": 99}')
     proc = run(bundle / "cli-app")
-    assert proc.returncode == 1 and "pybox-launcher:" in proc.stderr
+    assert proc.returncode == 1 and "wheelship-launcher:" in proc.stderr
 
 
 def test_archive_reproducible_and_complete(linux_dist: Path, tmp_path: Path) -> None:
@@ -125,7 +125,7 @@ def test_archive_reproducible_and_complete(linux_dist: Path, tmp_path: Path) -> 
         launcher = tf.getmember(f"{STEM}-linux/cli-app")
     assert link.issym() and link.linkname == "python3.12"
     assert launcher.mode == 0o755
-    assert f"{STEM}-linux/pybox.json" in names
+    assert f"{STEM}-linux/wheelship.json" in names
     assert (
         main(["build", "-q", "-C", str(APP), "-t", "linux", "-f", "archive", "-o", str(tmp_path)])
         == 0
@@ -138,14 +138,14 @@ def test_windows_cross_build(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) ->
     if not _has_launcher("windows-x86_64"):
         fake = tmp_path / "launchers" / "x86_64-pc-windows-msvc"
         fake.mkdir(parents=True)
-        (fake / "pybox-launcher.exe").write_bytes(b"console")
-        (fake / "pybox-launcher-gui.exe").write_bytes(b"gui")
-        monkeypatch.setenv("PYBOX_LAUNCHER_DIR", str(fake.parent))
+        (fake / "wheelship-launcher.exe").write_bytes(b"console")
+        (fake / "wheelship-launcher-gui.exe").write_bytes(b"gui")
+        monkeypatch.setenv("WHEELSHIP_LAUNCHER_DIR", str(fake.parent))
     out = tmp_path / "dist"
     assert main(["build", "-q", "-C", str(APP), "-t", "windows", "-o", str(out)]) == 0
     with zipfile.ZipFile(out / f"{STEM}-windows.zip") as zf:
         names = set(zf.namelist())
-        manifest = json.loads(zf.read(f"{STEM}-windows/pybox.json"))
+        manifest = json.loads(zf.read(f"{STEM}-windows/wheelship.json"))
     root = f"{STEM}-windows/"
     assert {root + "cli-app.exe", root + "cli-app-gui.exe", root + "python/python.exe"} <= names
     site = root + "python/Lib/site-packages/"
@@ -160,7 +160,7 @@ def test_windows_cross_build(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) ->
 
 @pytest.mark.skipif(sys.platform != "linux", reason="checks the lock file written on Linux CI too")
 def test_pbs_lock_is_pinned() -> None:
-    lock = pbs.Lock.load(APP / "pybox.lock")
+    lock = pbs.Lock.load(APP / "wheelship.lock")
     assert lock.release and all(len(sha) == 64 for sha in lock.assets.values())
 
 

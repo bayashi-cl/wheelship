@@ -15,19 +15,19 @@ dev = ["pytest>=8"]
 requires = ["hatchling"]
 build-backend = "hatchling.build"
 
-[tool.pybox]
+[tool.wheelship]
 lock = "pylock.toml"
 python = "3.12"
 
-[[tool.pybox.target]]
+[[tool.wheelship.target]]
 name = "lambda-x86"
 platform = "lambda-x86_64"
 formats = ["lambda-zip", "lambda-layer"]
 
-[[tool.pybox.target]]
+[[tool.wheelship.target]]
 name = "lambda-arm"
 platform = "lambda-arm64"
 formats = ["lambda-zip"]
 
-[tool.pybox.lambda]
+[tool.wheelship.lambda]
 handler = "lambda_app.handler:handler"

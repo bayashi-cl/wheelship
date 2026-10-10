@@ -3,11 +3,11 @@ members = ["packages/*"]
 exclude = ["tests/fixtures/**"]
 
 [tool.uv.sources]
-pybox = { workspace = true }
+wheelship = { workspace = true }
 
 [dependency-groups]
 dev = [
-    "pybox",
+    "wheelship",
     "pytest>=8",
     "ruff>=0.6",
     "mypy>=1.11",
@@ -16,7 +16,7 @@ dev = [
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 markers = [
-    "network: needs network access (PyPI / GitHub); skipped when PYBOX_OFFLINE=1",
+    "network: needs network access (PyPI / GitHub); skipped when WHEELSHIP_OFFLINE=1",
 ]
 
 [tool.ruff]
@@ -30,7 +30,7 @@ select = ["E", "F", "I", "UP", "B", "SIM"]
 [tool.mypy]
 python_version = "3.11"
 strict = true
-files = ["packages/pybox/src"]
+files = ["packages/wheelship/src"]
 
 [tool.ruff.lint.isort]
-known-first-party = ["pybox", "tests"]
+known-first-party = ["wheelship", "tests"]

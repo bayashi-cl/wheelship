@@ -1,4 +1,4 @@
-"""Select artifacts for a :class:`~pybox.target.Target` from a PEP 751 lock file.
+"""Select artifacts for a :class:`~wheelship.target.Target` from a PEP 751 lock file.
 
 Selection itself is delegated to :meth:`packaging.pylock.Pylock.select`, which
 implements the installer algorithm from the specification; we only feed it the

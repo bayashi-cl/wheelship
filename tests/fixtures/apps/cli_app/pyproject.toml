@@ -18,16 +18,16 @@ cli-app-gui = "cli_app.main:gui"
 requires = ["hatchling"]
 build-backend = "hatchling.build"
 
-[tool.pybox]
+[tool.wheelship]
 lock = "pylock.toml"
 python = "3.12"
 
-[[tool.pybox.target]]
+[[tool.wheelship.target]]
 name = "linux"
 platform = "linux-x86_64"
 formats = ["dir", "archive"]
 
-[[tool.pybox.target]]
+[[tool.wheelship.target]]
 name = "windows"
 platform = "windows-x86_64"
 formats = ["archive"]

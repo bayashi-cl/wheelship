@@ -10,7 +10,7 @@ from pathlib import Path
 from . import __version__, config, log
 from .bundle import build_target
 from .config import ProjectConfig, TargetConfig
-from .errors import ConfigError, PyboxError
+from .errors import ConfigError, WheelshipError
 
 
 def main(argv: Sequence[str] | None = None) -> int:
@@ -19,7 +19,7 @@ def main(argv: Sequence[str] | None = None) -> int:
     log.set_verbosity(args.verbose - args.quiet)
     try:
         return int(args.func(args))
-    except PyboxError as e:
+    except WheelshipError as e:
         print(f"error: {e}", file=sys.stderr)
         return 1
     except KeyboardInterrupt:
@@ -33,14 +33,14 @@ def _parser() -> argparse.ArgumentParser:
     )
     common.add_argument("-v", "--verbose", action="count", default=0)
     common.add_argument("-q", "--quiet", action="count", default=0)
-    adhoc = common.add_argument_group("ad-hoc target (instead of [[tool.pybox.target]])")
+    adhoc = common.add_argument_group("ad-hoc target (instead of [[tool.wheelship.target]])")
     adhoc.add_argument("--platform", help="e.g. linux-x86_64, windows-x86_64, lambda-arm64")
-    adhoc.add_argument("--python", help="target Python version (default: [tool.pybox].python)")
+    adhoc.add_argument("--python", help="target Python version (default: [tool.wheelship].python)")
     adhoc.add_argument("--glibc", help="newest glibc on the target, e.g. 2.28 (Linux only)")
     adhoc.add_argument("--interpreter", choices=["bundled", "system"])
 
-    p = argparse.ArgumentParser(prog="pybox", description="Build Python application bundles.")
-    p.add_argument("--version", action="version", version=f"pybox {__version__}")
+    p = argparse.ArgumentParser(prog="wheelship", description="Build Python application bundles.")
+    p.add_argument("--version", action="version", version=f"wheelship {__version__}")
     sub = p.add_subparsers(required=True, metavar="COMMAND")
 
     b = sub.add_parser("build", parents=[common], help="build artifacts")
@@ -81,7 +81,7 @@ def _targets(args: argparse.Namespace, cfg: ProjectConfig) -> list[TargetConfig]
     if args.python or args.glibc or args.interpreter:
         raise ConfigError("--python/--glibc/--interpreter require --platform")
     if not cfg.targets:
-        raise ConfigError("no targets configured; add [[tool.pybox.target]] or pass --platform")
+        raise ConfigError("no targets configured; add [[tool.wheelship.target]] or pass --platform")
     names = getattr(args, "target", None)
     return [cfg.target(n) for n in names] if names else list(cfg.targets)
 

@@ -1,6 +1,6 @@
-//! pybox launcher.
+//! wheelship launcher.
 //!
-//! Lives at the root of a bundle next to `pybox.json`. It selects the entry
+//! Lives at the root of a bundle next to `wheelship.json`. It selects the entry
 //! point by its own file stem (busybox style), then runs the bundled Python:
 //!
 //! ```text
@@ -14,8 +14,8 @@
 //!
 //! Environment variables (never command-line flags, to avoid clashing with the
 //! application's own arguments):
-//! * `PYBOX_DEBUG=1`    print what is being executed to stderr
-//! * `PYBOX_BOOT=python` run the bundled interpreter with the given arguments
+//! * `WHEELSHIP_DEBUG=1`    print what is being executed to stderr
+//! * `WHEELSHIP_BOOT=python` run the bundled interpreter with the given arguments
 
 use std::ffi::{OsStr, OsString};
 use std::path::{Path, PathBuf};
@@ -23,7 +23,7 @@ use std::path::{Path, PathBuf};
 mod manifest;
 pub use manifest::{EntryPoint, Interpreter, Manifest};
 
-pub const MANIFEST_NAME: &str = "pybox.json";
+pub const MANIFEST_NAME: &str = "wheelship.json";
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Subsystem {
@@ -56,12 +56,12 @@ fn launch() -> Result<i32, String> {
         .ok_or_else(|| format!("cannot determine the directory of {}", exe.display()))?;
     let manifest = Manifest::load(&root.join(MANIFEST_NAME))?;
     let user_args: Vec<OsString> = std::env::args_os().skip(1).collect();
-    let boot = std::env::var_os("PYBOX_BOOT");
+    let boot = std::env::var_os("WHEELSHIP_BOOT");
     let invocation = plan(&manifest, root, &exe, user_args, boot.as_deref())?;
-    if std::env::var_os("PYBOX_DEBUG").is_some_and(|v| !v.is_empty() && v != "0") {
-        eprintln!("pybox-launcher: bundle root: {}", root.display());
+    if std::env::var_os("WHEELSHIP_DEBUG").is_some_and(|v| !v.is_empty() && v != "0") {
+        eprintln!("wheelship-launcher: bundle root: {}", root.display());
         eprintln!(
-            "pybox-launcher: exec {:?} {:?}",
+            "wheelship-launcher: exec {:?} {:?}",
             invocation.program, invocation.args
         );
     }
@@ -79,7 +79,7 @@ pub fn plan(
     if let Some(boot) = boot.filter(|b| !b.is_empty()) {
         if boot != "python" {
             return Err(format!(
-                "unsupported PYBOX_BOOT value {boot:?} (expected 'python')"
+                "unsupported WHEELSHIP_BOOT value {boot:?} (expected 'python')"
             ));
         }
         return Ok(Invocation {
@@ -156,7 +156,7 @@ fn strip_verbatim(path: PathBuf) -> PathBuf {
 }
 
 fn report_error(subsystem: Subsystem, message: &str) {
-    let text = format!("pybox-launcher: {message}");
+    let text = format!("wheelship-launcher: {message}");
     if subsystem == Subsystem::Gui {
         platform::show_error(&text);
     } else {
@@ -259,7 +259,7 @@ mod platform {
 
     pub fn show_error(text: &str) {
         let wide = |s: &str| s.encode_utf16().chain(Some(0)).collect::<Vec<u16>>();
-        let (text, caption) = (wide(text), wide("pybox"));
+        let (text, caption) = (wide(text), wide("wheelship"));
         unsafe {
             MessageBoxW(
                 std::ptr::null_mut(),

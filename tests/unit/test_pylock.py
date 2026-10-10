@@ -4,10 +4,10 @@ from pathlib import Path
 
 import pytest
 
-from pybox.errors import ResolveError
-from pybox.lock import pylock
-from pybox.target import make_target
 from tests.conftest import FIXTURES, MakeWheel, sha256
+from wheelship.errors import ResolveError
+from wheelship.lock import pylock
+from wheelship.target import make_target
 
 FIXTURE_LOCK = FIXTURES / "apps" / "lambda_app" / "pylock.toml"
 

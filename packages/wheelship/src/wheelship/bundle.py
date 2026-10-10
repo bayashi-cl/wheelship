@@ -142,7 +142,7 @@ def build_target(
         log.debug(f"python-build-standalone {asset.release}: CPython {tc.target.python_minor}")
 
     artifacts = resolve(cfg, tc.target, find_lock(cfg, lock))
-    with tempfile.TemporaryDirectory(prefix="pybox-") as tmp:
+    with tempfile.TemporaryDirectory(prefix="wheelship-") as tmp:
         work = Path(tmp)
         log.info(f"obtaining {len(artifacts)} distributions")
         wheels = obtain(artifacts, tc.target, work, find_links=cfg.find_links)

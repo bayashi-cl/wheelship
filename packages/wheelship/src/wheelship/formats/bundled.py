@@ -4,7 +4,7 @@ Layout::
 
     <bundle>/
     ├── <script>(.exe)    launcher per console/gui script of the application
-    ├── pybox.json        manifest read by the launcher
+    ├── wheelship.json        manifest read by the launcher
     └── python/           PBS install_only tree; the app and its dependencies are
                           installed into its own site-packages (as pip would)
 """
@@ -78,9 +78,9 @@ def bundled_tree(ctx: BuildContext) -> Path:
         gui_interpreter=f"python/{layout.gui_interpreter}" if layout.gui_interpreter else None,
         python_flags=cfg.python_flags,
         entry_points=app_entry_points,
-        pybox_version=__version__,
+        wheelship_version=__version__,
     )
-    (root / "pybox.json").write_text(manifest.dumps(data), encoding="utf-8")
+    (root / "wheelship.json").write_text(manifest.dumps(data), encoding="utf-8")
 
     prune.prune(root, cfg.prune)
     if ctx.compile_bytecode:
@@ -100,7 +100,7 @@ def _executable(ctx: BuildContext, rel: str) -> bool:
     return (
         rel.startswith("python/bin/")
         or ".so" in rel.rsplit("/", 1)[-1]
-        or ("/" not in rel and rel != "pybox.json")  # launchers
+        or ("/" not in rel and rel != "wheelship.json")  # launchers
     )
 
 
@@ -108,8 +108,8 @@ def build_dir(ctx: BuildContext) -> Path:
     tree = bundled_tree(ctx)
     dest = ctx.out_dir / ctx.artifact_stem
     if dest.exists():
-        if not (dest / "pybox.json").is_file():
-            raise BuildError(f"{dest} exists and is not a pybox bundle; refusing to replace it")
+        if not (dest / "wheelship.json").is_file():
+            raise BuildError(f"{dest} exists and is not a wheelship bundle; refusing to replace it")
         shutil.rmtree(dest)
     dest.parent.mkdir(parents=True, exist_ok=True)
     shutil.copytree(tree, dest, symlinks=True)

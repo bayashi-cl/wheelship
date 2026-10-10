@@ -13,5 +13,5 @@ dist/
 build/
 
 # Prebuilt launchers are placed by CI, never committed
-/packages/pybox/src/pybox/_launchers/*
-!/packages/pybox/src/pybox/_launchers/.gitkeep
+/packages/wheelship/src/wheelship/_launchers/*
+!/packages/wheelship/src/wheelship/_launchers/.gitkeep

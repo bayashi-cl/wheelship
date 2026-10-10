@@ -1,6 +1,6 @@
-//! `pybox.json`: the only pybox-specific file format the launcher reads.
+//! `wheelship.json`: the only wheelship-specific file format the launcher reads.
 //!
-//! Unknown fields are ignored so that newer pybox versions can add metadata
+//! Unknown fields are ignored so that newer wheelship versions can add metadata
 //! without breaking older launchers; incompatible changes bump `schema`.
 
 use std::collections::BTreeMap;
@@ -44,7 +44,7 @@ impl Manifest {
         if m.schema != SCHEMA {
             return Err(format!(
                 "manifest schema {} is not supported by this launcher (expected {SCHEMA}); \
-                 rebuild the bundle with a matching pybox",
+                 rebuild the bundle with a matching wheelship",
                 m.schema
             ));
         }

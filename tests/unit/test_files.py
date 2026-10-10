@@ -7,13 +7,13 @@ from pathlib import Path
 
 import pytest
 
-from pybox import fetch, prune, reproducible
-from pybox.errors import BuildError, FetchError
-from pybox.install import flat_scheme, install_wheels
-from pybox.lock import Artifact, pipreport
-from pybox.target import make_target
-from pybox.wheels import Wheel, is_compatible, obtain
 from tests.conftest import MakeWheel, sha256
+from wheelship import fetch, prune, reproducible
+from wheelship.errors import BuildError, FetchError
+from wheelship.install import flat_scheme, install_wheels
+from wheelship.lock import Artifact, pipreport
+from wheelship.target import make_target
+from wheelship.wheels import Wheel, is_compatible, obtain
 
 
 @pytest.mark.parametrize(
@@ -153,7 +153,7 @@ def test_install_flat_scheme(tmp_path: Path, make_wheel: MakeWheel) -> None:
     install_wheels([Wheel(art, w)], flat_scheme(root, root), target, interpreter="/py")
     assert (root / "tool" / "__init__.py").is_file()
     info = root / "tool-1.0.dist-info"
-    assert (info / "INSTALLER").read_text().startswith("pybox")
+    assert (info / "INSTALLER").read_text().startswith("wheelship")
     assert "tool/__init__.py" in (info / "RECORD").read_text()
     script = (root / "bin" / "tool").read_text()
     assert script.startswith("#!/py")

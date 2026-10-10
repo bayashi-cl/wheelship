@@ -1,9 +1,9 @@
 """Locate prebuilt launcher binaries.
 
-Released pybox wheels carry launchers for every supported target under
-``pybox/_launchers/<triple>/``, so users never need a Rust toolchain. During
+Released wheelship wheels carry launchers for every supported target under
+``wheelship/_launchers/<triple>/``, so users never need a Rust toolchain. During
 development the launchers come from this repository's cargo ``target/``
-directory, or from ``PYBOX_LAUNCHER_DIR``.
+directory, or from ``WHEELSHIP_LAUNCHER_DIR``.
 """
 
 from __future__ import annotations
@@ -22,14 +22,16 @@ _PACKAGE_DIR = Path(__file__).resolve().parent / "_launchers"
 
 def binary_name(target: Target, kind: Kind) -> str:
     if target.os == "windows":
-        return "pybox-launcher-gui.exe" if kind == "gui" else "pybox-launcher.exe"
+        return "wheelship-launcher-gui.exe" if kind == "gui" else "wheelship-launcher.exe"
     # There is no GUI subsystem on Linux: both kinds use the console launcher.
-    return "pybox-launcher"
+    return "wheelship-launcher"
 
 
 def _repo_target_dir() -> Path | None:
     for parent in Path(__file__).resolve().parents:
-        if (parent / "Cargo.toml").is_file() and (parent / "crates" / "pybox-launcher").is_dir():
+        if (parent / "Cargo.toml").is_file() and (
+            parent / "crates" / "wheelship-launcher"
+        ).is_dir():
             return parent / "target"
     return None
 
@@ -38,7 +40,7 @@ def candidates(target: Target, kind: Kind) -> list[Path]:
     name = binary_name(target, kind)
     triple = target_triple(target)
     result: list[Path] = []
-    if env := os.environ.get("PYBOX_LAUNCHER_DIR"):
+    if env := os.environ.get("WHEELSHIP_LAUNCHER_DIR"):
         result += [Path(env) / triple / name, Path(env) / name]
     result.append(_PACKAGE_DIR / triple / name)
     if (cargo := _repo_target_dir()) is not None:
@@ -55,7 +57,7 @@ def find(target: Target, kind: Kind) -> Path:
         if path.is_file():
             return path
     raise BuildError(
-        f"no {kind} launcher for {target_triple(target)} is available in this pybox "
+        f"no {kind} launcher for {target_triple(target)} is available in this wheelship "
         f"installation (development: `cargo build --release --target {target_triple(target)}`, "
-        "or set PYBOX_LAUNCHER_DIR)"
+        "or set WHEELSHIP_LAUNCHER_DIR)"
     )

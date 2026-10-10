@@ -25,13 +25,13 @@ _CHUNK = 1 << 20
 
 
 def cache_dir() -> Path:
-    if env := os.environ.get("PYBOX_CACHE_DIR"):
+    if env := os.environ.get("WHEELSHIP_CACHE_DIR"):
         return Path(env)
     if sys.platform == "win32":
         base = Path(os.environ.get("LOCALAPPDATA") or Path.home() / "AppData" / "Local")
-        return base / "pybox" / "cache"
+        return base / "wheelship" / "cache"
     base = Path(os.environ.get("XDG_CACHE_HOME") or Path.home() / ".cache")
-    return base / "pybox"
+    return base / "wheelship"
 
 
 def pick_hash(hashes: Mapping[str, str]) -> tuple[str, str] | None:
@@ -82,7 +82,7 @@ def fetch(
             return dest
     else:
         log.warn(f"downloading {url} without hash verification")
-        dest = Path(tempfile.mkdtemp(prefix="pybox-dl-")) / filename
+        dest = Path(tempfile.mkdtemp(prefix="wheelship-dl-")) / filename
 
     dest.parent.mkdir(parents=True, exist_ok=True)
     tmp = dest.with_name(f".{dest.name}.{os.getpid()}.part")
@@ -104,7 +104,7 @@ def ssl_context() -> ssl.SSLContext:
 
 
 def _download(url: str, dest: Path, *, attempts: int = 3) -> None:
-    req = urllib.request.Request(url, headers={"User-Agent": f"pybox/{__version__}"})
+    req = urllib.request.Request(url, headers={"User-Agent": f"wheelship/{__version__}"})
     for attempt in range(1, attempts + 1):
         try:
             with (

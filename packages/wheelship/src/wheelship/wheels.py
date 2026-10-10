@@ -90,7 +90,7 @@ def obtain(
         if not is_compatible(w.path.name, target):
             hint = (
                 " (built on the host for a different platform; provide a prebuilt "
-                "wheel through [tool.pybox].find-links)"
+                "wheel through [tool.wheelship].find-links)"
                 if w.artifact.kind != "wheel"
                 else ""
             )

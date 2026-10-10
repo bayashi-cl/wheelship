@@ -40,9 +40,9 @@ jobs:
           mkdir -p out/${{ matrix.triple }}
           src=target/${{ matrix.triple }}/release
           if [[ "${{ matrix.triple }}" == *windows* ]]; then
-            cp $src/pybox-launcher.exe $src/pybox-launcher-gui.exe out/${{ matrix.triple }}/
+            cp $src/wheelship-launcher.exe $src/wheelship-launcher-gui.exe out/${{ matrix.triple }}/
           else
-            cp $src/pybox-launcher out/${{ matrix.triple }}/
+            cp $src/wheelship-launcher out/${{ matrix.triple }}/
           fi
           ls -l out/${{ matrix.triple }}
       - uses: actions/upload-artifact@v4
@@ -82,7 +82,7 @@ jobs:
       - run: uv run mypy
       - run: uv run pytest -v
         env:
-          PYBOX_LAUNCHER_DIR: ${{ github.workspace }}/launchers
+          WHEELSHIP_LAUNCHER_DIR: ${{ github.workspace }}/launchers
 
   wheel:
     needs: launchers
@@ -93,16 +93,16 @@ jobs:
       - uses: actions/download-artifact@v4
         with:
           pattern: launcher-*
-          path: packages/pybox/src/pybox/_launchers
+          path: packages/wheelship/src/wheelship/_launchers
           merge-multiple: true
-      - run: uv build --package pybox --wheel -o dist
+      - run: uv build --package wheelship --wheel -o dist
       - name: Check the wheel carries every launcher
         run: |
           unzip -l dist/*.whl | tee listing
-          for f in x86_64-unknown-linux-gnu/pybox-launcher aarch64-unknown-linux-gnu/pybox-launcher \
-                   x86_64-pc-windows-msvc/pybox-launcher.exe x86_64-pc-windows-msvc/pybox-launcher-gui.exe \
-                   aarch64-pc-windows-msvc/pybox-launcher.exe aarch64-pc-windows-msvc/pybox-launcher-gui.exe; do
-            grep -q "pybox/_launchers/$f" listing || { echo "missing $f"; exit 1; }
+          for f in x86_64-unknown-linux-gnu/wheelship-launcher aarch64-unknown-linux-gnu/wheelship-launcher \
+                   x86_64-pc-windows-msvc/wheelship-launcher.exe x86_64-pc-windows-msvc/wheelship-launcher-gui.exe \
+                   aarch64-pc-windows-msvc/wheelship-launcher.exe aarch64-pc-windows-msvc/wheelship-launcher-gui.exe; do
+            grep -q "wheelship/_launchers/$f" listing || { echo "missing $f"; exit 1; }
           done
       - uses: actions/upload-artifact@v4
         with:
