@@ -309,3 +309,32 @@ def test_case_collisions_drop_links_first() -> None:
         "python/share/terminfo/N/NCR260VT300WPP",
         "python/share/terminfo/2/2621a",
     }
+
+
+def test_resolve_link_chains_and_cycles() -> None:
+    def member(name: str, link: str | None = None, hard: bool = False) -> tarfile.TarInfo:
+        ti = tarfile.TarInfo(name)
+        if link is not None:
+            ti.type = tarfile.LNKTYPE if hard else tarfile.SYMTYPE
+            ti.linkname = link
+        return ti
+
+    ms = [
+        member("python/bin/python3.12"),
+        member("python/bin/python3", "python3.12"),
+        member("python/bin/python", "python3"),  # chain
+        member("python/share/terminfo/1/1178", "../a/adm1178"),
+        member("python/share/terminfo/a/adm1178"),
+        member("python/x", "y"),
+        member("python/y", "x"),  # cycle
+        member("python/hard", "python/bin/python3.12", hard=True),
+        member("python/dangling", "nowhere"),
+    ]
+    by_name = {m.name: m for m in ms}
+    assert pbs.resolve_link(by_name["python/bin/python"], by_name) == "python/bin/python3.12"
+    assert pbs.resolve_link(by_name["python/share/terminfo/1/1178"], by_name) == (
+        "python/share/terminfo/a/adm1178"
+    )
+    assert pbs.resolve_link(by_name["python/hard"], by_name) == "python/bin/python3.12"
+    assert pbs.resolve_link(by_name["python/x"], by_name) is None
+    assert pbs.resolve_link(by_name["python/dangling"], by_name) is None

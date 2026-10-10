@@ -12,6 +12,7 @@ import dataclasses
 import json
 import os
 import platform
+import posixpath
 import re
 import shutil
 import sys
@@ -248,8 +249,36 @@ def case_collisions(members: Iterable[tarfile.TarInfo]) -> set[str]:
     return skip
 
 
-def extract(archive: Path, dest: Path) -> Path:
-    """Extract an ``install_only`` archive; returns the ``python`` directory."""
+def resolve_link(member: tarfile.TarInfo, by_name: dict[str, tarfile.TarInfo]) -> str | None:
+    """Archive name a (possibly chained) link finally points at, or None."""
+    seen: set[str] = set()
+    current = member
+    while current.issym() or current.islnk():
+        if current.name in seen:
+            return None  # cycle
+        seen.add(current.name)
+        if current.islnk():  # hard links name the target from the archive root
+            target = current.linkname
+        else:
+            target = posixpath.normpath(
+                posixpath.join(posixpath.dirname(current.name), current.linkname)
+            )
+        nxt = by_name.get(target)
+        if nxt is None:
+            return None
+        current = nxt
+    return current.name
+
+
+def extract(archive: Path, dest: Path, *, materialize_links: bool | None = None) -> Path:
+    """Extract an ``install_only`` archive; returns the ``python`` directory.
+
+    On Windows (``materialize_links`` defaults to it) no links are created:
+    regular entries are extracted first, then each link becomes a copy of what
+    it resolves to inside the archive.
+    """
+    if materialize_links is None:
+        materialize_links = os.name == "nt"
     with tarfile.open(archive) as tf:
         members = tf.getmembers()
         if sys.platform in ("win32", "darwin"):  # case-insensitive by default
@@ -257,7 +286,25 @@ def extract(archive: Path, dest: Path) -> Path:
             if skip:
                 log.debug(f"skipping {len(skip)} entries that differ only in case")
                 members = [m for m in members if m.name not in skip]
-        tf.extractall(dest, members=members, filter="data")
+        if not materialize_links:
+            tf.extractall(dest, members=members, filter="data")
+        else:
+            links = [m for m in members if m.issym() or m.islnk()]
+            tf.extractall(
+                dest, members=[m for m in members if not (m.issym() or m.islnk())], filter="data"
+            )
+            by_name = {m.name: m for m in members}
+            for link in links:
+                target = resolve_link(link, by_name)
+                if target is None:
+                    log.debug(f"dropping dangling link {link.name}")
+                    continue
+                src, dst = dest / target, dest / link.name
+                dst.parent.mkdir(parents=True, exist_ok=True)
+                if src.is_dir():
+                    shutil.copytree(src, dst, dirs_exist_ok=True)
+                elif src.is_file():
+                    shutil.copy2(src, dst)
     root = dest / "python"
     if not root.is_dir():
         raise FetchError(f"{archive.name}: unexpected layout (no top-level 'python/')")

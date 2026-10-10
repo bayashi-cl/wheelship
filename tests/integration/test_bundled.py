@@ -186,3 +186,19 @@ def test_runs_on_windows(tmp_path: Path) -> None:
         text=True,
     )
     assert "Pygments version" in proc.stdout, proc.stderr
+
+
+@pytest.mark.skipif(not HOST_LINUX_X86, reason="runs the extracted interpreter")
+def test_pbs_extract_without_symlinks(tmp_path: Path) -> None:
+    """The Windows-host extraction path (links materialized as copies) yields a working tree."""
+    lock = pbs.Lock.load(APP / "wheelship.lock")
+    asset = pbs.resolve(
+        pbs.PbsConfig(release=lock.release), (3, 12), "x86_64-unknown-linux-gnu", None
+    )
+    root = pbs.extract(pbs.download(asset), tmp_path, materialize_links=True)
+    assert not [p for p in root.rglob("*") if p.is_symlink()]
+    proc = subprocess.run(
+        [str(root / "bin" / "python3"), "-c", "import ssl, sqlite3; print('ok')"],
+        capture_output=True, text=True,
+    )  # fmt: skip
+    assert proc.stdout.strip() == "ok", proc.stderr
