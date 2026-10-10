@@ -76,7 +76,7 @@ PBS release ────► [fetch + verify] ───────────�
 |---|---|:-:|:-:|:-:|---|
 | `dir` | bundled / system | ✓ | ✓ | – | 展開済みディレクトリ（onedir 相当） |
 | `archive` | bundled / system | ✓ (tar.gz) | ✓ (zip) | – | `dir` をアーカイブしたもの |
-| `exe` | bundled（system も可） | ✓ | ✓ | – | 単一実行ファイル。ネイティブランチャの後ろに zip を連結し、初回起動時にキャッシュへ展開する |
+| `exe` | bundled / system | ✓ | ✓ | – | 単一実行ファイル。ネイティブランチャの後ろに zip を連結し、初回起動時にキャッシュへ展開する |
 | `pyz` | system | ✓ | ✓ | – | PEP 441 zipapp。ネイティブ拡張は初回にキャッシュへ展開する（shiv 方式） |
 | `lambda-zip` | system（マネージドランタイム） | – | – | ✓ | `/var/task` 直下に配置するデプロイパッケージ |
 | `lambda-layer` | system | – | – | ✓ | `python/` 配下に依存を置いた Layer |
@@ -102,33 +102,44 @@ myapp/
 
 ```
 myapp/
-├── myapp(.exe)          # ランチャ（下記の順でインタプリタを探す）
+├── myapp(.exe)            # ランチャ（下記の順でインタプリタを探す）
 ├── wheelship.json
-├── _wheelship_boot.py       # ブートストラップ
-└── lib/                 # purelib = platlib = lib/ のスキームでインストールした site-packages
+├── _wheelship_boot.py     # ブートストラップ
+└── lib/                   # purelib = platlib = lib/ のスキームでインストールした site ディレクトリ
 ```
 
-- ランチャがインタプリタを探す順序: `WHEELSHIP_PYTHON` 環境変数 → マニフェストに書かれた候補 → Windows では `py -3.12`（PEP 397 の py ランチャ）→ PATH 上の `python3.12` / `python3`。
-- `_wheelship_boot.py` の処理:
-  1. ABI 互換性チェック: `sys.implementation.cache_tag` と `sysconfig.get_config_var("EXT_SUFFIX")` をマニフェストの記録と照合する。不一致なら分かりやすいエラーで終了する。
+- ランチャがインタプリタを探す順序: `WHEELSHIP_PYTHON` 環境変数 → マニフェストの候補を PATH から探す。候補は Linux が `python3.12` → `python3`、Windows が `py -3.12`（PEP 397 の py ランチャ。GUI 用は `pyw`）→ `python`。
+- 起動コマンドは `<python> -I -S <root>/_wheelship_boot.py <entry point 名> <ランチャのパス> <ユーザー引数>`。`-S` により、使う Python 自身の site-packages（システムや venv）は `sys.path` に入らない。マニフェストの `{root}/` で始まる引数は、ランチャがバンドルの場所に置き換える。
+- `_wheelship_boot.py` の処理（標準ライブラリのみ。古い Python でもバージョン不一致を報告できるよう、新しい構文は使わない）:
+  1. ABI の確認: `sys.implementation.name`、メジャー・マイナーバージョン、`sysconfig.get_config_var("EXT_SUFFIX")`（アーキテクチャや glibc / musl の違いも表れる）をマニフェストと照合する。合わなければ、何が必要かと `WHEELSHIP_PYTHON` の指定方法を表示して終了コード 1 で終わる。
   2. `site.addsitedir(lib)` を呼ぶ。`.pth` も処理されるので、名前空間パッケージや `.pth` に依存するパッケージも動く。
-  3. エントリーポイントを `importlib.metadata` で解決して呼ぶ。
+  3. エントリーポイント（`module:attr`）を import して呼ぶ。`sys.argv[0]` はランチャのパスにする。
+- 依存パッケージの console script（例: `pygmentize`）は生成しない。インタプリタを同梱しないので、指す先を確実に決められないため。
 
 ### 4.3 `exe`（単一ファイル）
 
 ```
-[ ランチャ stub ][ zip payload（Bundle 全体） ][ trailer: magic + payload offset + sha256 ]
-                                                [ （Windows: 署名時の Authenticode 証明書テーブル） ]
+[ ランチャ ][ payload.zip ][ meta.json ][ "WHSHPAY1" ][ payload offset u64 ][ payload 長 u64 ][ meta 長 u64 ]
+                                          [ （Windows: 署名時に付く Authenticode 証明書テーブル） ]
 ```
 
+- bundled / system のどちらのツリーも、そのまま payload にできる（ランチャは中身を区別しない）。
+- payload はツリー全体の zip。Linux の symlink は symlink のまま格納する（`python3 -> python3.12` を実体化すると 30MB 増えるため）。ツリー直下のランチャは外側の exe と重複するので入れない。
 - 起動の流れ:
-  1. 自身の末尾から magic を後方探索する。署名で証明書テーブルが末尾に付いても見つかる（PyInstaller と同じ考え方）。
-  2. キャッシュ `<cache>/<app>/<sha256 先頭16桁>/` に完了マーカーがあれば、そのまま使う。
-  3. 無ければ `<hash>.tmp-<pid>` に展開してから rename する（アトミック）。並行起動で rename が競合したら一時ディレクトリを捨て、既存のものを使う。**ロックファイルや symlink は使わない**ので、Windows でも安全。
-  4. 展開先の `python -I` で entry point を起動する。
-- キャッシュディレクトリ: Linux は `$XDG_CACHE_HOME/wheelship`（無ければ `~/.cache/wheelship`）、Windows は `%LOCALAPPDATA%\wheelship`。`WHEELSHIP_CACHE_DIR` で上書きできる。
-- 一度展開すれば 2 回目以降は展開しない。毎回 temp に展開する PyInstaller onefile より速く、AV に誤検知されにくい。
-- 古いバージョンのキャッシュは、同じアプリの最新 N 個を残して削除する（ランチャが起動時に掃除する。失敗しても無視する）。
+  1. 自身の末尾 1MiB から目印を後方探索する。署名で証明書テーブルが末尾に付いても見つかる。目印はランチャのバイナリ自身に定数として現れないよう、反転した値で持って実行時に戻す。検証に通らない候補は読み飛ばす。
+  2. キャッシュ `<cache>/apps/<アプリ名>/<payload の sha256 先頭16桁>/` に `wheelship.json` があれば、そのまま使う。
+  3. 無ければ同じ階層の `.tmp-<pid>-<時刻>` に展開してから rename する。並行起動で rename が競合したら一時ディレクトリを捨て、先に完成したものを使う。**ロックファイルは使わない**ので、Windows でも安全。zip のパスが外に出ないことと、symlink がバンドルの外を指さないことを確認する。
+  4. 展開先をバンドルの場所として、通常のランチャと同じ手順で起動する。`sys.argv[0]` は外側の exe のパスになる。
+- キャッシュディレクトリ: Linux は `$XDG_CACHE_HOME/wheelship/apps`（無ければ `~/.cache/wheelship/apps`）、Windows は `%LOCALAPPDATA%\wheelship\cache\apps`。`WHEELSHIP_CACHE_DIR` を指定するとその下の `apps/` を使う（ビルド用キャッシュと同じ場所）。
+- 一度展開すれば 2 回目以降は展開しない。参考（76MB のバンドル）: 初回 0.6 秒、2 回目以降 0.12 秒。
+- 古いバージョンは、各バージョンの最終利用時刻（`.wheelship-last-used`）を見て、現在のもの以外に新しい 2 つまで残して削除する。1 時間以上前の一時ディレクトリも削除する。失敗しても無視する（Windows で実行中のものは消せないため）。
+- 出力名は Windows が `<名前>-<版>-<ターゲット>.exe`、Linux が `<名前>-<版>-<ターゲット>.bin`（dir 形式の出力ディレクトリと名前が重ならないように）。entry point はファイル名で選ぶので、複数ある場合はコピーやリネームで使い分ける。名前が一致しなければ既定の entry point を使う。
+
+### 4.3.1 `pyz`（system、PEP 441 zipapp）
+
+- 中身は `__main__.py`（ブートストラップと同じファイル）、`wheelship.json`、`lib/`。先頭に `#!/usr/bin/env python3.12` を付ける。Windows では py ランチャがこの shebang を解釈する。
+- ネイティブ拡張は zip から import できないため、初回に `lib/` をキャッシュへ展開する。展開先や手順は exe と同じ（キー: `lib/` の内容の sha256）。
+- shebang からは `-I -S` を渡せないため、ブートストラップが Python 自身の site-packages を `sys.path` から取り除く。ユーザー環境変数（`PYTHONPATH` など）の影響は受ける。
 
 ### 4.4 Lambda
 
@@ -415,7 +426,7 @@ packages/wheelship/src/wheelship/
 |---|---|---|
 | 0 ✅ | Target モデル、pylock リーダ、wheel 選択、fetch、installer によるインストール、`lambda-zip` / `lambda-layer`、決定的な zip | ランチャ不要ですぐ役立つ。クロスビルドの土台を検証する |
 | 1 ✅ | PBS 取得、bundled の `dir` / `archive`、Rust ランチャ（dir モード、Linux / Windows） | PyInstaller onedir の代わりになる |
-| 2 | `exe`（payload 連結、キャッシュ展開）、system モードの `dir` / `pyz` | 単一ファイル配布 |
+| 2 ✅ | `exe`（payload 連結、キャッシュ展開）、system モードの `dir` / `archive` / `exe` / `pyz` | 単一ファイル配布 |
 | 3 | `lambda-runtime`、bytecode 事前コンパイルの自動化、prune、SBOM、gui_scripts | Lambda の最適化と仕上げ |
 | 4 | Windows の Authenticode 署名手順、`Py_Main` 埋め込み方式の検討、macOS | 拡張 |
 

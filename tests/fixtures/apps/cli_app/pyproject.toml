@@ -25,9 +25,21 @@ python = "3.12"
 [[tool.wheelship.target]]
 name = "linux"
 platform = "linux-x86_64"
-formats = ["dir", "archive"]
+formats = ["dir", "archive", "exe"]
+
+[[tool.wheelship.target]]
+name = "linux-system"
+platform = "linux-x86_64"
+interpreter = "system"
+formats = ["dir", "pyz", "exe"]
 
 [[tool.wheelship.target]]
 name = "windows"
 platform = "windows-x86_64"
-formats = ["archive"]
+formats = ["archive", "exe"]
+
+[[tool.wheelship.target]]
+name = "windows-system"
+platform = "windows-x86_64"
+interpreter = "system"
+formats = ["archive", "pyz"]

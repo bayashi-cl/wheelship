@@ -26,7 +26,7 @@ FORMATS: dict[str, int] = {
     "pyz": 2,
     "lambda-runtime": 3,
 }
-IMPLEMENTED_PHASE = 1
+IMPLEMENTED_PHASE = 2
 
 
 @dataclasses.dataclass(frozen=True)
@@ -256,14 +256,12 @@ def _check_format(fmt: str, target: Target, interp: Interpreter, name: str) -> N
         raise ConfigError(f"target {name!r}: unknown format {fmt!r} (known: {', '.join(FORMATS)})")
     if FORMATS[fmt] > IMPLEMENTED_PHASE:
         raise ConfigError(f"target {name!r}: format {fmt!r} is not implemented yet")
-    if fmt in ("dir", "archive"):
-        if target.lambda_runtime:
-            raise ConfigError(f"target {name!r}: format {fmt!r} is not for Lambda targets")
-        if interp != "bundled":
-            raise ConfigError(
-                f"target {name!r}: format {fmt!r} with interpreter = 'system' "
-                "is not implemented yet"
-            )
+    if fmt in ("dir", "archive", "exe", "pyz") and target.lambda_runtime:
+        raise ConfigError(f"target {name!r}: format {fmt!r} is not for Lambda targets")
+    if fmt == "pyz" and interp != "system":
+        raise ConfigError(
+            f"target {name!r}: 'pyz' runs on the target's interpreter; set interpreter = 'system'"
+        )
     if fmt in ("lambda-zip", "lambda-layer"):
         if not target.lambda_runtime:
             raise ConfigError(f"target {name!r}: format {fmt!r} requires a lambda-* platform")

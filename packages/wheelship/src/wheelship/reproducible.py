@@ -9,6 +9,7 @@ Zip archives store symbolic links as regular files (dereferenced); tar keeps the
 from __future__ import annotations
 
 import gzip
+import hashlib
 import os
 import stat
 import tarfile
@@ -29,11 +30,18 @@ def source_date_epoch() -> int:
     return max(int(raw), _ZIP_EPOCH)
 
 
-def walk_files(root: Path) -> Iterator[tuple[str, Path]]:
-    """Yield ``(posix relative path, absolute path)`` for files, sorted."""
-    for dirpath, dirnames, filenames in os.walk(root, followlinks=True):
+def walk_files(root: Path, *, followlinks: bool = True) -> Iterator[tuple[str, Path]]:
+    """Yield ``(posix relative path, absolute path)`` for files, sorted.
+
+    Without ``followlinks``, symlinks to directories are yielded like files.
+    """
+    for dirpath, dirnames, filenames in os.walk(root, followlinks=followlinks):
         dirnames.sort()
         rel_dir = Path(dirpath).relative_to(root).as_posix()
+        if not followlinks:
+            links = [d for d in dirnames if Path(dirpath, d).is_symlink()]
+            dirnames[:] = [d for d in dirnames if d not in links]
+            filenames = filenames + links
         for fn in sorted(filenames):
             rel = fn if rel_dir == "." else f"{rel_dir}/{fn}"
             yield rel, Path(dirpath, fn)
@@ -49,19 +57,33 @@ def write_zip(
     *,
     prefix: str = "",
     executable: ExecPredicate | None = None,
+    exclude: ExecPredicate | None = None,
+    symlinks: bool = False,
     compresslevel: int = 9,
 ) -> int:
-    """Zip the contents of ``root`` into ``out``. Returns the uncompressed size."""
+    """Zip the contents of ``root`` into ``out``. Returns the uncompressed size.
+
+    With ``symlinks`` symbolic links are stored as links (Unix mode ``S_IFLNK``,
+    content = link target) instead of being dereferenced. ``exclude`` gets the
+    path relative to ``root``.
+    """
     date_time = time.gmtime(source_date_epoch())[:6]
     total = 0
     out.parent.mkdir(parents=True, exist_ok=True)
     tmp = out.with_name(f".{out.name}.part")
     with zipfile.ZipFile(tmp, "w", zipfile.ZIP_DEFLATED, compresslevel=compresslevel) as zf:
-        for rel, path in walk_files(root):
+        for rel, path in walk_files(root, followlinks=not symlinks):
+            if exclude is not None and exclude(rel):
+                continue
             name = f"{prefix.strip('/')}/{rel}" if prefix else rel
-            is_exec = _is_host_executable(path) or (executable is not None and executable(rel))
             info = zipfile.ZipInfo(name, date_time=date_time)
             info.create_system = 3  # Unix, so external_attr permissions are honored
+            if symlinks and path.is_symlink():
+                info.external_attr = 0o120777 << 16
+                info.compress_type = zipfile.ZIP_STORED
+                zf.writestr(info, os.readlink(path).replace("\\", "/"))
+                continue
+            is_exec = _is_host_executable(path) or (executable is not None and executable(rel))
             info.external_attr = ((0o100755 if is_exec else 0o100644) & 0xFFFF) << 16
             info.compress_type = zipfile.ZIP_DEFLATED
             data = path.read_bytes()
@@ -123,3 +145,13 @@ def write_tar_gz(
                     tf.addfile(ti, f)
     os.replace(tmp, out)
     return total
+
+
+def tree_digest(root: Path) -> str:
+    """sha256 over the relative paths and contents of every file under ``root``."""
+    h = hashlib.sha256()
+    for rel, path in walk_files(root, followlinks=False):
+        h.update(rel.encode() + b"\0")
+        h.update(os.readlink(path).encode() if path.is_symlink() else path.read_bytes())
+        h.update(b"\0")
+    return h.hexdigest()

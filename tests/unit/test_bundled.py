@@ -185,6 +185,7 @@ def test_manifest_document() -> None:
         app_name="tool",
         app_version="1.0",
         target=make_target("windows-x86_64", "3.12.15"),
+        mode="bundled",
         interpreter="python/python.exe",
         gui_interpreter="python/pythonw.exe",
         python_flags=["-I"],

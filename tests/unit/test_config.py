@@ -89,7 +89,7 @@ handler = "my_app.h:handler"
         ),
         (
             "[tool.wheelship]\npython='3.12'\n[[tool.wheelship.target]]\nname='a'\n"
-            "platform='linux-x86_64'\nformats=['exe']",
+            "platform='lambda-x86_64'\nformats=['lambda-runtime']",
             "not implemented",
         ),
         (

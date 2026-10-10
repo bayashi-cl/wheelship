@@ -29,13 +29,23 @@ wheelship build -t linux -f archive                          # one target, one f
 wheelship build --platform lambda-arm64 --python 3.13 -f lambda-zip   # ad-hoc target
 ```
 
-Formats implemented so far: `lambda-zip`, `lambda-layer` (managed runtime) and
-`dir`, `archive` (bundled python-build-standalone interpreter + launcher).
+Formats implemented so far:
+
+| format | interpreter | output |
+|---|---|---|
+| `dir` / `archive` | bundled or system | directory / `.tar.gz` (Linux) or `.zip` (Windows) |
+| `exe` | bundled or system | single file (`.exe` / `.bin`), extracted once into a cache |
+| `pyz` | system | PEP 441 zipapp |
+| `lambda-zip` / `lambda-layer` | Lambda managed runtime | deployment package / layer |
+
+`interpreter = "bundled"` ships python-build-standalone; `"system"` uses CPython of
+the target's version found on `PATH` (or `WHEELSHIP_PYTHON`).
 The python-build-standalone release is pinned in `wheelship.lock` (commit it).
 Examples: `tests/fixtures/apps/*/pyproject.toml`.
 
-Launcher environment variables: `WHEELSHIP_DEBUG=1` (show what is executed),
-`WHEELSHIP_BOOT=python` (run the bundled interpreter directly).
+Runtime environment variables: `WHEELSHIP_DEBUG=1` (show what is executed),
+`WHEELSHIP_BOOT=python` (run the interpreter directly), `WHEELSHIP_PYTHON`
+(interpreter for system bundles), `WHEELSHIP_CACHE_DIR` (where `exe`/`pyz` extract).
 Build-time: `WHEELSHIP_CACHE_DIR`, `WHEELSHIP_PBS_MIRROR`, `WHEELSHIP_LAUNCHER_DIR`,
 `WHEELSHIP_BYTECODE_PYTHON`, `SOURCE_DATE_EPOCH`.
 

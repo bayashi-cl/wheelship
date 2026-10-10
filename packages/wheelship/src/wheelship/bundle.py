@@ -24,8 +24,8 @@ class BuildContext:
     wheels: list[Wheel]
     compile_bytecode: bool
     pbs_asset: pbs.Asset | None = None
-    bundled_root: Path | None = None
-    """Assembled bundled tree, shared by the bundled formats of one target."""
+    tree_root: Path | None = None
+    """Assembled bundle tree, shared by the dir/archive/exe/pyz formats of one target."""
 
     @property
     def target(self) -> Target:
@@ -69,13 +69,15 @@ FormatBuilder = Callable[[BuildContext], Path]
 
 
 def _builders() -> dict[str, FormatBuilder]:
-    from .formats import aws_lambda, bundled
+    from .formats import aws_lambda, package, system
 
     return {
         "lambda-zip": aws_lambda.build_zip,
         "lambda-layer": aws_lambda.build_layer,
-        "dir": bundled.build_dir,
-        "archive": bundled.build_archive,
+        "dir": package.build_dir,
+        "archive": package.build_archive,
+        "exe": package.build_exe,
+        "pyz": system.build_pyz,
     }
 
 

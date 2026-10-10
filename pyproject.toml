@@ -34,3 +34,7 @@ files = ["packages/wheelship/src"]
 
 [tool.ruff.lint.isort]
 known-first-party = ["wheelship", "tests"]
+
+[tool.ruff.lint.per-file-ignores]
+# Runs on the target interpreter, possibly old: keep %-formatting and plain code.
+"packages/wheelship/src/wheelship/_boot.py" = ["UP", "SIM"]

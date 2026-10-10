@@ -1,11 +1,16 @@
 //! wheelship launcher.
 //!
-//! Lives at the root of a bundle next to `wheelship.json`. It selects the entry
-//! point by its own file stem (busybox style), then runs the bundled Python:
+//! Lives at the root of a bundle next to `wheelship.json`, or carries the whole
+//! bundle as an appended zip payload (single-file executable, extracted once
+//! into a cache; see [`payload`]). It selects the entry point by its own file
+//! stem (busybox style), then runs Python:
 //!
 //! ```text
 //! <interpreter> <entry point args...> <path of this executable> <user args...>
 //! ```
+//!
+//! The interpreter is either bundled (python-build-standalone inside the
+//! bundle) or a system one found on `PATH` (`WHEELSHIP_PYTHON` overrides).
 //!
 //! On Unix the launcher `exec`s the interpreter (same PID, natural signals).
 //! On Windows it spawns the interpreter, ignores Ctrl-C itself (the child gets
@@ -14,16 +19,21 @@
 //!
 //! Environment variables (never command-line flags, to avoid clashing with the
 //! application's own arguments):
-//! * `WHEELSHIP_DEBUG=1`    print what is being executed to stderr
-//! * `WHEELSHIP_BOOT=python` run the bundled interpreter with the given arguments
+//! * `WHEELSHIP_DEBUG=1`     print what is being executed to stderr
+//! * `WHEELSHIP_BOOT=python` run the interpreter with the given arguments
+//! * `WHEELSHIP_PYTHON`      interpreter to use for system-interpreter bundles
+//! * `WHEELSHIP_CACHE_DIR`   where single-file executables are extracted
 
-use std::ffi::{OsStr, OsString};
+use std::ffi::OsString;
+use std::fs::File;
 use std::path::{Path, PathBuf};
 
 mod manifest;
-pub use manifest::{EntryPoint, Interpreter, Manifest};
+pub mod payload;
+pub use manifest::{Candidate, EntryPoint, Interpreter, Manifest, Mode};
 
 pub const MANIFEST_NAME: &str = "wheelship.json";
+const ROOT_PREFIX: &str = "{root}/";
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Subsystem {
@@ -35,6 +45,14 @@ pub enum Subsystem {
 pub struct Invocation {
     pub program: PathBuf,
     pub args: Vec<OsString>,
+}
+
+/// Process environment as seen by [`plan`]; injected for testability.
+pub struct Env<'a> {
+    pub boot: Option<OsString>,
+    pub python: Option<OsString>,
+    /// Resolve a program name on `PATH`.
+    pub which: &'a dyn Fn(&str) -> Option<PathBuf>,
 }
 
 /// Entry point of both launcher binaries.
@@ -49,16 +67,22 @@ pub fn main(subsystem: Subsystem) -> ! {
     std::process::exit(code)
 }
 
+fn debug_enabled() -> bool {
+    std::env::var_os("WHEELSHIP_DEBUG").is_some_and(|v| !v.is_empty() && v != "0")
+}
+
 fn launch() -> Result<i32, String> {
     let exe = current_exe()?;
-    let root = exe
-        .parent()
-        .ok_or_else(|| format!("cannot determine the directory of {}", exe.display()))?;
+    let root = bundle_root(&exe)?;
     let manifest = Manifest::load(&root.join(MANIFEST_NAME))?;
     let user_args: Vec<OsString> = std::env::args_os().skip(1).collect();
-    let boot = std::env::var_os("WHEELSHIP_BOOT");
-    let invocation = plan(&manifest, root, &exe, user_args, boot.as_deref())?;
-    if std::env::var_os("WHEELSHIP_DEBUG").is_some_and(|v| !v.is_empty() && v != "0") {
+    let env = Env {
+        boot: std::env::var_os("WHEELSHIP_BOOT"),
+        python: std::env::var_os("WHEELSHIP_PYTHON"),
+        which: &which,
+    };
+    let invocation = plan(&manifest, &root, &exe, user_args, &env)?;
+    if debug_enabled() {
         eprintln!("wheelship-launcher: bundle root: {}", root.display());
         eprintln!(
             "wheelship-launcher: exec {:?} {:?}",
@@ -68,24 +92,37 @@ fn launch() -> Result<i32, String> {
     platform::run(invocation)
 }
 
-/// Decide what to execute. Pure function: unit-testable without a filesystem.
+/// The directory holding `wheelship.json`: next to the launcher, or the
+/// extracted payload of a single-file executable.
+fn bundle_root(exe: &Path) -> Result<PathBuf, String> {
+    let mut file = File::open(exe).map_err(|e| format!("cannot open {}: {e}", exe.display()))?;
+    match payload::find(&mut file).map_err(|e| format!("{}: {e}", exe.display()))? {
+        Some(trailer) => payload::ensure_extracted(exe, file, &trailer),
+        None => exe
+            .parent()
+            .map(Path::to_path_buf)
+            .ok_or_else(|| format!("cannot determine the directory of {}", exe.display())),
+    }
+}
+
+/// Decide what to execute. No side effects: unit-testable.
 pub fn plan(
     manifest: &Manifest,
     root: &Path,
     exe: &Path,
     user_args: Vec<OsString>,
-    boot: Option<&OsStr>,
+    env: &Env,
 ) -> Result<Invocation, String> {
-    if let Some(boot) = boot.filter(|b| !b.is_empty()) {
+    let boot = env.boot.as_deref().filter(|b| !b.is_empty());
+    if let Some(boot) = boot {
         if boot != "python" {
             return Err(format!(
                 "unsupported WHEELSHIP_BOOT value {boot:?} (expected 'python')"
             ));
         }
-        return Ok(Invocation {
-            program: join_relative(root, &manifest.interpreter.path),
-            args: user_args,
-        });
+        let (program, mut args) = interpreter(manifest, root, false, env)?;
+        args.extend(user_args);
+        return Ok(Invocation { program, args });
     }
 
     let name = exe
@@ -109,17 +146,122 @@ pub fn plan(
             )
         })?;
 
-    let interpreter = match (&manifest.interpreter.gui_path, entry_point.gui) {
-        (Some(gui), true) => gui,
-        _ => &manifest.interpreter.path,
-    };
-    let mut args: Vec<OsString> = entry_point.args.iter().map(OsString::from).collect();
+    let (program, mut args) = interpreter(manifest, root, entry_point.gui, env)?;
+    args.extend(
+        entry_point
+            .args
+            .iter()
+            .map(|a| match a.strip_prefix(ROOT_PREFIX) {
+                Some(rel) => join_relative(root, rel).into_os_string(),
+                None => OsString::from(a),
+            }),
+    );
     args.push(exe.as_os_str().to_owned());
     args.extend(user_args);
-    Ok(Invocation {
-        program: join_relative(root, interpreter),
-        args,
-    })
+    Ok(Invocation { program, args })
+}
+
+/// The interpreter program and the arguments that must precede everything else.
+fn interpreter(
+    manifest: &Manifest,
+    root: &Path,
+    gui: bool,
+    env: &Env,
+) -> Result<(PathBuf, Vec<OsString>), String> {
+    let interp = &manifest.interpreter;
+    match interp.mode {
+        Mode::Bundled => {
+            let path = match (&interp.gui_path, gui) {
+                (Some(gui_path), true) => gui_path,
+                _ => interp
+                    .path
+                    .as_ref()
+                    .ok_or_else(|| format!("{MANIFEST_NAME}: interpreter.path is missing"))?,
+            };
+            Ok((join_relative(root, path), Vec::new()))
+        }
+        Mode::System => {
+            if let Some(python) = env.python.as_ref().filter(|p| !p.is_empty()) {
+                let as_path = PathBuf::from(python);
+                let program = match as_path.to_str() {
+                    Some(name) if as_path.components().count() == 1 => {
+                        (env.which)(name).unwrap_or(as_path)
+                    }
+                    _ => as_path,
+                };
+                return Ok((program, Vec::new()));
+            }
+            for candidate in &interp.candidates {
+                let name = match (&candidate.gui_program, gui) {
+                    (Some(g), true) => g,
+                    _ => &candidate.program,
+                };
+                if let Some(program) = (env.which)(name) {
+                    let args = candidate.args.iter().map(OsString::from).collect();
+                    return Ok((program, args));
+                }
+            }
+            let tried: Vec<String> = interp
+                .candidates
+                .iter()
+                .map(|c| {
+                    std::iter::once(c.program.as_str())
+                        .chain(c.args.iter().map(String::as_str))
+                        .collect::<Vec<_>>()
+                        .join(" ")
+                })
+                .collect();
+            Err(format!(
+                "no suitable Python interpreter found on PATH (tried: {}); \
+                 install it or set WHEELSHIP_PYTHON",
+                tried.join(", ")
+            ))
+        }
+    }
+}
+
+/// Look up `name` on `PATH` (with `PATHEXT` on Windows).
+pub fn which(name: &str) -> Option<PathBuf> {
+    let path = std::env::var_os("PATH")?;
+    let exts: Vec<String> = if cfg!(windows) {
+        std::env::var("PATHEXT")
+            .unwrap_or_else(|_| ".EXE;.COM;.BAT;.CMD".into())
+            .split(';')
+            .filter(|e| !e.is_empty())
+            .map(|e| e.to_ascii_lowercase())
+            .collect()
+    } else {
+        Vec::new()
+    };
+    for dir in std::env::split_paths(&path) {
+        let base = dir.join(name);
+        if cfg!(windows) {
+            if Path::new(name).extension().is_some() && base.is_file() {
+                return Some(base);
+            }
+            for ext in &exts {
+                let candidate = dir.join(format!("{name}{ext}"));
+                if candidate.is_file() {
+                    return Some(candidate);
+                }
+            }
+        } else if is_executable(&base) {
+            return Some(base);
+        }
+    }
+    None
+}
+
+#[cfg(unix)]
+fn is_executable(path: &Path) -> bool {
+    use std::os::unix::fs::PermissionsExt;
+    path.metadata()
+        .is_ok_and(|m| m.is_file() && m.permissions().mode() & 0o111 != 0)
+}
+
+#[cfg(not(unix))]
+fn is_executable(path: &Path) -> bool {
+    path.is_file()
 }
 
 /// Join a `/`-separated manifest path onto `root` using native separators.
@@ -290,12 +432,24 @@ mod tests {
         v.iter().map(OsString::from).collect()
     }
 
+    fn no_path(_: &str) -> Option<PathBuf> {
+        None
+    }
+
+    fn env(boot: Option<&str>) -> Env<'static> {
+        Env {
+            boot: boot.map(OsString::from),
+            python: None,
+            which: &no_path,
+        }
+    }
+
     #[test]
     fn selects_entry_point_by_stem() {
         let m = Manifest::parse(MANIFEST).unwrap();
         let root = Path::new("/opt/demo");
         let exe = root.join("demo");
-        let inv = plan(&m, root, &exe, os(&["--flag", "x"]), None).unwrap();
+        let inv = plan(&m, root, &exe, os(&["--flag", "x"]), &env(None)).unwrap();
         assert_eq!(
             inv.program,
             root.join("python").join("bin").join("python3.12")
@@ -310,7 +464,7 @@ mod tests {
     fn gui_entry_point_uses_gui_interpreter() {
         let m = Manifest::parse(MANIFEST).unwrap();
         let root = Path::new("/opt/demo");
-        let inv = plan(&m, root, &root.join("demo-gui.exe"), vec![], None).unwrap();
+        let inv = plan(&m, root, &root.join("demo-gui.exe"), vec![], &env(None)).unwrap();
         assert_eq!(inv.program, root.join("python").join("pythonw.exe"));
         assert_eq!(inv.args[2], OsString::from("gui"));
     }
@@ -319,7 +473,7 @@ mod tests {
     fn renamed_executable_falls_back_to_default() {
         let m = Manifest::parse(MANIFEST).unwrap();
         let root = Path::new("/opt/demo");
-        let inv = plan(&m, root, &root.join("renamed"), vec![], None).unwrap();
+        let inv = plan(&m, root, &root.join("renamed"), vec![], &env(None)).unwrap();
         assert_eq!(inv.args[2], OsString::from("code"));
     }
 
@@ -327,7 +481,14 @@ mod tests {
     fn unknown_entry_point_without_default_fails() {
         let text = MANIFEST.replace(r#""default_entry_point": "demo""#, r#""x": null"#);
         let m = Manifest::parse(&text).unwrap();
-        let err = plan(&m, Path::new("/r"), Path::new("/r/other"), vec![], None).unwrap_err();
+        let err = plan(
+            &m,
+            Path::new("/r"),
+            Path::new("/r/other"),
+            vec![],
+            &env(None),
+        )
+        .unwrap_err();
         assert!(err.contains("available: demo, demo-gui"), "{err}");
     }
 
@@ -335,12 +496,92 @@ mod tests {
     fn boot_python_runs_interpreter_directly() {
         let m = Manifest::parse(MANIFEST).unwrap();
         let root = Path::new("/opt/demo");
-        let boot = OsString::from("python");
-        let inv = plan(&m, root, &root.join("demo"), os(&["-V"]), Some(&boot)).unwrap();
+        let inv = plan(
+            &m,
+            root,
+            &root.join("demo"),
+            os(&["-V"]),
+            &env(Some("python")),
+        )
+        .unwrap();
         assert_eq!(inv.program, root.join("python/bin/python3.12"));
         assert_eq!(inv.args, os(&["-V"]));
-        let bad = OsString::from("shell");
-        assert!(plan(&m, root, &root.join("demo"), vec![], Some(&bad)).is_err());
+        assert!(plan(&m, root, &root.join("demo"), vec![], &env(Some("shell"))).is_err());
+    }
+
+    const SYSTEM: &str = r#"{
+        "schema": 1,
+        "interpreter": {"mode": "system", "candidates": [
+            {"program": "py", "gui_program": "pyw", "args": ["-3.12"]},
+            {"program": "python3.12"}
+        ]},
+        "entry_points": {
+            "tool": {"args": ["-I", "{root}/_wheelship_boot.py", "tool"]},
+            "tool-gui": {"args": ["-I", "{root}/_wheelship_boot.py", "tool-gui"], "gui": true}
+        }
+    }"#;
+
+    #[test]
+    fn system_interpreter_from_candidates() {
+        let m = Manifest::parse(SYSTEM).unwrap();
+        let root = Path::new("/opt/tool");
+        let only_python312 =
+            |name: &str| (name == "python3.12").then(|| PathBuf::from("/usr/bin/python3.12"));
+        let e = Env {
+            boot: None,
+            python: None,
+            which: &only_python312,
+        };
+        let inv = plan(&m, root, &root.join("tool"), os(&["x"]), &e).unwrap();
+        assert_eq!(inv.program, Path::new("/usr/bin/python3.12"));
+        let boot_script = root.join("_wheelship_boot.py").into_os_string();
+        assert_eq!(
+            inv.args,
+            vec![
+                "-I".into(),
+                boot_script,
+                "tool".into(),
+                "/opt/tool/tool".into(),
+                "x".into()
+            ]
+        );
+    }
+
+    #[test]
+    fn system_interpreter_py_launcher_and_gui() {
+        let m = Manifest::parse(SYSTEM).unwrap();
+        let root = Path::new("/opt/tool");
+        let py = |name: &str| {
+            ["py", "pyw"]
+                .contains(&name)
+                .then(|| PathBuf::from(format!("C:/W/{name}.exe")))
+        };
+        let e = Env {
+            boot: None,
+            python: None,
+            which: &py,
+        };
+        let inv = plan(&m, root, &root.join("tool"), vec![], &e).unwrap();
+        assert_eq!(inv.program, Path::new("C:/W/py.exe"));
+        assert_eq!(inv.args[0], OsString::from("-3.12"));
+        let gui = plan(&m, root, &root.join("tool-gui"), vec![], &e).unwrap();
+        assert_eq!(gui.program, Path::new("C:/W/pyw.exe"));
+    }
+
+    #[test]
+    fn system_interpreter_override_and_missing() {
+        let m = Manifest::parse(SYSTEM).unwrap();
+        let root = Path::new("/opt/tool");
+        let e = Env {
+            boot: None,
+            python: Some("/x/python".into()),
+            which: &no_path,
+        };
+        let inv = plan(&m, root, &root.join("tool"), vec![], &e).unwrap();
+        assert_eq!(inv.program, Path::new("/x/python"));
+        assert_eq!(inv.args[0], OsString::from("-I")); // no candidate args with an override
+        let err = plan(&m, root, &root.join("tool"), vec![], &env(None)).unwrap_err();
+        assert!(err.contains("tried: py -3.12, python3.12"), "{err}");
     }
 
     #[test]

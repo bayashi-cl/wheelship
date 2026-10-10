@@ -51,33 +51,70 @@ def default_entry_point(app_name: str, entry_points: Sequence[EntryPoint]) -> st
     return candidates[0] if candidates else None
 
 
+BOOT_SCRIPT = "_wheelship_boot.py"
+
+
+def system_candidates(target: Target) -> list[dict[str, Any]]:
+    """Interpreters the launcher looks for on ``PATH``, best first.
+
+    The boot script verifies the version and ABI, so a wrong ``python3`` is
+    reported clearly rather than failing on import.
+    """
+    minor = target.python_minor
+    if target.os == "windows":
+        return [
+            {"program": "py", "gui_program": "pyw", "args": [f"-{minor}"]},
+            {"program": "python", "gui_program": "pythonw"},
+        ]
+    return [{"program": f"python{minor}"}, {"program": "python3"}]
+
+
 def build(
     *,
     app_name: str,
     app_version: str,
     target: Target,
-    interpreter: str,
-    gui_interpreter: str | None,
+    mode: Literal["bundled", "system"],
     python_flags: Sequence[str],
     entry_points: Sequence[EntryPoint],
     wheelship_version: str,
+    interpreter: str | None = None,
+    gui_interpreter: str | None = None,
 ) -> dict[str, Any]:
+    """The manifest document.
+
+    bundled: ``interpreter``/``gui_interpreter`` are paths relative to the root;
+    entry points run generated ``-c`` code. system: the launcher finds an
+    interpreter on ``PATH`` and runs the boot script, which checks the ABI and
+    adds ``lib/`` to ``sys.path``.
+    """
+    interp: dict[str, Any] = {
+        "mode": mode,
+        "python": target.python_minor,
+        "version": ".".join(map(str, target.python)) if target.python_exact else None,
+        "ext_suffix": target.ext_suffix,
+    }
+    if mode == "bundled":
+        if interpreter is None:
+            raise ValueError("bundled manifests need the interpreter path")
+        interp |= {"path": interpreter, "gui_path": gui_interpreter}
+    else:
+        interp["candidates"] = system_candidates(target)
+
+    def args(ep: EntryPoint) -> list[str]:
+        if mode == "bundled":
+            return [*python_flags, "-c", entry_code(ep.module, ep.attr, pop_argv0=True)]
+        # -S: the interpreter's own site-packages (system or venv) stay out of
+        # sys.path; the boot script adds only the bundle's lib/.
+        no_site = [] if "-S" in python_flags else ["-S"]
+        return [*python_flags, *no_site, f"{{root}}/{BOOT_SCRIPT}", ep.name]
+
     return {
         "schema": SCHEMA,
         "app": {"name": app_name, "version": app_version},
-        "interpreter": {
-            "mode": "bundled",
-            "path": interpreter,
-            "gui_path": gui_interpreter,
-            "version": ".".join(map(str, target.python)),
-            "ext_suffix": target.ext_suffix,
-        },
+        "interpreter": interp,
         "entry_points": {
-            ep.name: {
-                "args": [*python_flags, "-c", entry_code(ep.module, ep.attr, pop_argv0=True)],
-                "gui": ep.gui,
-                "value": f"{ep.module}:{ep.attr}",
-            }
+            ep.name: {"args": args(ep), "gui": ep.gui, "value": f"{ep.module}:{ep.attr}"}
             for ep in entry_points
         },
         "default_entry_point": default_entry_point(app_name, entry_points),
