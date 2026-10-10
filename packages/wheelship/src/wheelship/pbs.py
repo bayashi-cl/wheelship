@@ -230,10 +230,34 @@ def download(asset: Asset) -> Path:
     return fetch.fetch(asset.url, asset.name, {"sha256": asset.sha256})
 
 
+def case_collisions(members: Iterable[tarfile.TarInfo]) -> set[str]:
+    """Names to skip on a case-insensitive filesystem.
+
+    Linux builds ship terminfo aliases differing only in case (for example
+    ``N/NCR260VT300WPP -> ../n/ncr260vt300wpp``); on Windows such a link would
+    point at itself. Of each colliding group, links are dropped first.
+    """
+    groups: dict[str, list[tarfile.TarInfo]] = {}
+    for m in members:
+        groups.setdefault(m.name.lower(), []).append(m)
+    skip: set[str] = set()
+    for group in groups.values():
+        if len(group) > 1:
+            keep = min(group, key=lambda m: (m.issym() or m.islnk(), m.name))
+            skip.update(m.name for m in group if m is not keep)
+    return skip
+
+
 def extract(archive: Path, dest: Path) -> Path:
     """Extract an ``install_only`` archive; returns the ``python`` directory."""
     with tarfile.open(archive) as tf:
-        tf.extractall(dest, filter="data")
+        members = tf.getmembers()
+        if sys.platform in ("win32", "darwin"):  # case-insensitive by default
+            skip = case_collisions(members)
+            if skip:
+                log.debug(f"skipping {len(skip)} entries that differ only in case")
+                members = [m for m in members if m.name not in skip]
+        tf.extractall(dest, members=members, filter="data")
     root = dest / "python"
     if not root.is_dir():
         raise FetchError(f"{archive.name}: unexpected layout (no top-level 'python/')")

@@ -289,3 +289,23 @@ def test_tar_gz_deterministic_with_symlinks(tmp_path: Path) -> None:
     assert {m.uid for m in members.values()} == {0} and {m.mtime for m in members.values()} == {
         reproducible.source_date_epoch()
     }
+
+
+def test_case_collisions_drop_links_first() -> None:
+    def member(name: str, link: str | None = None) -> tarfile.TarInfo:
+        ti = tarfile.TarInfo(name)
+        if link is not None:
+            ti.type, ti.linkname = tarfile.SYMTYPE, link
+        return ti
+
+    members = [
+        member("python/share/terminfo/N/NCR260VT300WPP", "../n/ncr260vt300wpp"),
+        member("python/share/terminfo/n/ncr260vt300wpp"),
+        member("python/share/terminfo/2/2621A"),
+        member("python/share/terminfo/2/2621a"),
+        member("python/bin/python3.12"),
+    ]
+    assert pbs.case_collisions(members) == {
+        "python/share/terminfo/N/NCR260VT300WPP",
+        "python/share/terminfo/2/2621a",
+    }
