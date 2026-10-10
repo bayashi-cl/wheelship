@@ -1,0 +1,36 @@
+[tool.uv.workspace]
+members = ["packages/*"]
+exclude = ["tests/fixtures/**"]
+
+[tool.uv.sources]
+pybox = { workspace = true }
+
+[dependency-groups]
+dev = [
+    "pybox",
+    "pytest>=8",
+    "ruff>=0.6",
+    "mypy>=1.11",
+]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+markers = [
+    "network: needs network access (PyPI / GitHub); skipped when PYBOX_OFFLINE=1",
+]
+
+[tool.ruff]
+line-length = 100
+target-version = "py311"
+extend-exclude = ["tests/fixtures"]
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B", "SIM"]
+
+[tool.mypy]
+python_version = "3.11"
+strict = true
+files = ["packages/pybox/src"]
+
+[tool.ruff.lint.isort]
+known-first-party = ["pybox", "tests"]

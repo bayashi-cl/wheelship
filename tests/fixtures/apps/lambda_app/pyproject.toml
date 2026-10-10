@@ -1,0 +1,33 @@
+[project]
+name = "lambda-app"
+version = "0.1.0"
+requires-python = ">=3.11"
+dependencies = [
+    "markupsafe>=2.1",
+    "attrs>=23",
+    "colorama>=0.4; sys_platform == 'win32'",
+]
+
+[dependency-groups]
+dev = ["pytest>=8"]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.pybox]
+lock = "pylock.toml"
+python = "3.12"
+
+[[tool.pybox.target]]
+name = "lambda-x86"
+platform = "lambda-x86_64"
+formats = ["lambda-zip", "lambda-layer"]
+
+[[tool.pybox.target]]
+name = "lambda-arm"
+platform = "lambda-arm64"
+formats = ["lambda-zip"]
+
+[tool.pybox.lambda]
+handler = "lambda_app.handler:handler"

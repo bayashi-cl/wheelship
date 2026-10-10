@@ -1,0 +1,25 @@
+[project]
+name = "pybox"
+version = "0.1.0.dev0"
+description = "Build relocatable Python application bundles for Linux, Windows and AWS Lambda"
+readme = "README.md"
+requires-python = ">=3.11"
+license = "MIT OR Apache-2.0"
+dependencies = [
+    "packaging>=26.1",
+    "installer>=0.7",
+    "build>=1.2",
+    "truststore>=0.10",
+]
+
+[project.scripts]
+pybox = "pybox.cli:main"
+
+[build-system]
+requires = ["hatchling>=1.26"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/pybox"]
+# Launchers are git-ignored build outputs placed by CI; include them explicitly.
+artifacts = ["src/pybox/_launchers/**"]

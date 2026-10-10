@@ -1,0 +1,17 @@
+# Rust
+/target/
+
+# Python
+.venv/
+__pycache__/
+*.py[cod]
+*.egg-info/
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+dist/
+build/
+
+# Prebuilt launchers are placed by CI, never committed
+/packages/pybox/src/pybox/_launchers/*
+!/packages/pybox/src/pybox/_launchers/.gitkeep
