@@ -1,0 +1,110 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  # Release launchers for every supported target. Linux builds go through
+  # cargo-zigbuild against glibc 2.17 (the python-build-standalone baseline) so
+  # they run on any manylinux2014-compatible system.
+  launchers:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { triple: x86_64-unknown-linux-gnu, os: ubuntu-latest, zig: true }
+          - { triple: aarch64-unknown-linux-gnu, os: ubuntu-latest, zig: true }
+          - { triple: x86_64-pc-windows-msvc, os: windows-latest }
+          - { triple: aarch64-pc-windows-msvc, os: windows-latest }
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v6
+      - run: rustup target add ${{ matrix.triple }}
+      - name: Build (zig, glibc 2.17)
+        if: matrix.zig
+        run: |
+          uv tool install cargo-zigbuild
+          cargo zigbuild --release --locked --target ${{ matrix.triple }}.2.17
+      - name: Build (msvc)
+        if: ${{ !matrix.zig }}
+        run: cargo build --release --locked --target ${{ matrix.triple }}
+      - name: Collect
+        shell: bash
+        run: |
+          mkdir -p out/${{ matrix.triple }}
+          src=target/${{ matrix.triple }}/release
+          if [[ "${{ matrix.triple }}" == *windows* ]]; then
+            cp $src/pybox-launcher.exe $src/pybox-launcher-gui.exe out/${{ matrix.triple }}/
+          else
+            cp $src/pybox-launcher out/${{ matrix.triple }}/
+          fi
+          ls -l out/${{ matrix.triple }}
+      - uses: actions/upload-artifact@v4
+        with:
+          name: launcher-${{ matrix.triple }}
+          path: out/
+
+  rust:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - run: cargo fmt --check
+      - run: |
+          for t in x86_64-unknown-linux-gnu x86_64-pc-windows-msvc aarch64-pc-windows-msvc; do
+            rustup target add $t
+            cargo clippy --locked --all-targets --target $t -- -D warnings
+          done
+      - run: cargo test --locked
+
+  python:
+    needs: launchers
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v6
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: launcher-*
+          path: launchers
+          merge-multiple: true
+      - run: uv sync --locked
+      - run: uv run ruff check . && uv run ruff format --check .
+      - run: uv run mypy
+      - run: uv run pytest -v
+        env:
+          PYBOX_LAUNCHER_DIR: ${{ github.workspace }}/launchers
+
+  wheel:
+    needs: launchers
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v6
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: launcher-*
+          path: packages/pybox/src/pybox/_launchers
+          merge-multiple: true
+      - run: uv build --package pybox --wheel -o dist
+      - name: Check the wheel carries every launcher
+        run: |
+          unzip -l dist/*.whl | tee listing
+          for f in x86_64-unknown-linux-gnu/pybox-launcher aarch64-unknown-linux-gnu/pybox-launcher \
+                   x86_64-pc-windows-msvc/pybox-launcher.exe x86_64-pc-windows-msvc/pybox-launcher-gui.exe \
+                   aarch64-pc-windows-msvc/pybox-launcher.exe aarch64-pc-windows-msvc/pybox-launcher-gui.exe; do
+            grep -q "pybox/_launchers/$f" listing || { echo "missing $f"; exit 1; }
+          done
+      - uses: actions/upload-artifact@v4
+        with:
+          name: wheel
+          path: dist/

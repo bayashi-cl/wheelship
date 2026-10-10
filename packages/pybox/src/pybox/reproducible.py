@@ -3,13 +3,15 @@
 Entries are sorted, timestamps come from ``SOURCE_DATE_EPOCH`` (default:
 1980-01-01, the zip epoch) and Unix permissions are set explicitly so that
 archives built on Windows still carry executable bits for Linux targets.
-Symbolic links are stored as regular files (dereferenced).
+Zip archives store symbolic links as regular files (dereferenced); tar keeps them.
 """
 
 from __future__ import annotations
 
+import gzip
 import os
 import stat
+import tarfile
 import time
 import zipfile
 from collections.abc import Callable, Iterator
@@ -57,7 +59,7 @@ def write_zip(
     with zipfile.ZipFile(tmp, "w", zipfile.ZIP_DEFLATED, compresslevel=compresslevel) as zf:
         for rel, path in walk_files(root):
             name = f"{prefix.strip('/')}/{rel}" if prefix else rel
-            is_exec = _is_host_executable(path) or (executable is not None and executable(name))
+            is_exec = _is_host_executable(path) or (executable is not None and executable(rel))
             info = zipfile.ZipInfo(name, date_time=date_time)
             info.create_system = 3  # Unix, so external_attr permissions are honored
             info.external_attr = ((0o100755 if is_exec else 0o100644) & 0xFFFF) << 16
@@ -65,5 +67,59 @@ def write_zip(
             data = path.read_bytes()
             total += len(data)
             zf.writestr(info, data, compresslevel=compresslevel)
+    os.replace(tmp, out)
+    return total
+
+
+def write_tar_gz(
+    root: Path,
+    out: Path,
+    *,
+    prefix: str = "",
+    executable: ExecPredicate | None = None,
+) -> int:
+    """Tar+gzip ``root`` into ``out``, keeping symbolic links. Returns the uncompressed size."""
+    epoch = source_date_epoch()
+    prefix = prefix.strip("/")
+    total = 0
+
+    def info(name: str, kind: bytes, mode: int) -> tarfile.TarInfo:
+        ti = tarfile.TarInfo(f"{prefix}/{name}" if prefix else name)
+        ti.type, ti.mode, ti.mtime = kind, mode, epoch
+        ti.uid = ti.gid = 0
+        ti.uname = ti.gname = ""
+        return ti
+
+    out.parent.mkdir(parents=True, exist_ok=True)
+    tmp = out.with_name(f".{out.name}.part")
+    with (
+        tmp.open("wb") as raw,
+        gzip.GzipFile(filename="", mode="wb", fileobj=raw, mtime=epoch, compresslevel=9) as gz,
+        tarfile.open(fileobj=gz, mode="w", format=tarfile.PAX_FORMAT) as tf,
+    ):
+        if prefix:
+            tf.addfile(info("", tarfile.DIRTYPE, 0o755))
+        for dirpath, dirnames, filenames in os.walk(root):
+            dirnames.sort()
+            rel_dir = Path(dirpath).relative_to(root).as_posix()
+            # Symlinks to directories show up in dirnames; store them as links.
+            entries = sorted(filenames + [d for d in dirnames if Path(dirpath, d).is_symlink()])
+            dirnames[:] = [d for d in dirnames if not Path(dirpath, d).is_symlink()]
+            if rel_dir != ".":
+                tf.addfile(info(rel_dir, tarfile.DIRTYPE, 0o755))
+            for fn in entries:
+                rel = fn if rel_dir == "." else f"{rel_dir}/{fn}"
+                path = Path(dirpath, fn)
+                if path.is_symlink():
+                    ti = info(rel, tarfile.SYMTYPE, 0o777)
+                    ti.linkname = os.readlink(path).replace("\\", "/")
+                    tf.addfile(ti)
+                    continue
+                is_exec = _is_host_executable(path) or (executable is not None and executable(rel))
+                ti = info(rel, tarfile.REGTYPE, 0o755 if is_exec else 0o644)
+                ti.size = path.stat().st_size
+                total += ti.size
+                with path.open("rb") as f:
+                    tf.addfile(ti, f)
     os.replace(tmp, out)
     return total

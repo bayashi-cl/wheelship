@@ -5,8 +5,31 @@ edition.workspace = true
 license.workspace = true
 publish.workspace = true
 
+[lib]
+name = "pybox_launcher"
+path = "src/lib.rs"
+
+# Console launcher (all platforms).
 [[bin]]
 name = "pybox-launcher"
 path = "src/main.rs"
 
+# Windows GUI-subsystem launcher for gui_scripts (no console window).
+# On Linux it is identical to the console launcher.
+[[bin]]
+name = "pybox-launcher-gui"
+path = "src/gui.rs"
+
 [dependencies]
+serde = { version = "1.0.229", features = ["derive"] }
+serde_json = "1.0.151"
+
+[target."cfg(windows)".dependencies]
+windows-sys = { version = "0.61.2", features = [
+    "Win32_Foundation",
+    "Win32_Security",
+    "Win32_System_Console",
+    "Win32_System_JobObjects",
+    "Win32_System_Threading",
+    "Win32_UI_WindowsAndMessaging",
+] }

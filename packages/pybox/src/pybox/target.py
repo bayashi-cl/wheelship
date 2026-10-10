@@ -53,6 +53,8 @@ class Target:
     """Newest glibc available on the target (Linux only); bounds manylinux tags."""
     lambda_runtime: bool = False
     """Target is an AWS Lambda managed Python runtime (``/var/task`` layout)."""
+    python_exact: bool = False
+    """The patch level of ``python`` was specified (or resolved), not defaulted to 0."""
 
     def __post_init__(self) -> None:
         if self.os == "linux" and self.glibc is None:
@@ -61,6 +63,11 @@ class Target:
             raise ConfigError("glibc is only meaningful for Linux targets")
 
     # -- identification -------------------------------------------------
+
+    @property
+    def python_spec(self) -> tuple[int, ...]:
+        """``(3, 12, 7)`` if the patch level is known, else ``(3, 12)``."""
+        return self.python if self.python_exact else self.python[:2]
 
     @property
     def python_tag(self) -> str:
@@ -210,13 +217,14 @@ def make_target(
             "linux-{x86_64,aarch64}, windows-{x86_64,aarch64}, lambda-{x86_64,arm64}"
         ) from None
     py = parse_python_version(python)
+    exact = python.strip().count(".") == 2
     if kind == "linux":
-        return Target("linux", arch, py, parse_glibc(glibc) if glibc else None)
+        return Target("linux", arch, py, parse_glibc(glibc) if glibc else None, python_exact=exact)
     if kind == "windows":
         if glibc:
             raise ConfigError("glibc cannot be set for a Windows target")
-        return Target("windows", arch, py)
+        return Target("windows", arch, py, python_exact=exact)
     if kind == "lambda":
         g = parse_glibc(glibc) if glibc else lambda_glibc(py)
-        return Target("linux", arch, py, g, lambda_runtime=True)
+        return Target("linux", arch, py, g, lambda_runtime=True, python_exact=exact)
     raise ConfigError(f"unknown platform kind {kind!r} in {platform!r}")

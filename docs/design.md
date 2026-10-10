@@ -89,7 +89,7 @@ myapp/
 ├── myapp(.exe)          # ランチャ（console_scripts ごとに 1 つ。gui_scripts は Windows GUI サブシステム版）
 ├── pybox.json           # マニフェスト
 └── python/              # PBS の install_only(_stripped) ツリー
-    ├── bin/python3.12   # Linux（シンボリックリンクは実体化する）
+    ├── bin/python3.12   # Linux（dir / tar.gz では PBS の相対 symlink を保持。zip 系では実体化）
     ├── python.exe       # Windows
     └── lib/python3.12/site-packages/   # ← アプリと依存をここへインストール（Windows では Lib/site-packages）
 ```
@@ -150,15 +150,32 @@ myapp/
 ## 5. python-build-standalone の扱い
 
 - 取得元: `astral-sh/python-build-standalone` の GitHub Releases。
-- 設定でリリースタグ（日付）を**固定**できる。省略したら最新を解決し、そのタグとアセットの sha256 を `pybox.lock` に記録する（`pylock.toml` は PEP 751 のスキーマを汚さないよう、触らない）。
+- 設定でリリースタグ（日付）を**固定**できる。省略したら最新（`latest-release.json`）を解決し、そのタグとアセットの sha256 を `pybox.lock` に記録する（`pylock.toml` は PEP 751 のスキーマを汚さないよう、触らない）。2 回目以降は `pybox.lock` だけで決まるため、ネットワークでメタデータを引かない。
+
+  ```toml
+  # pybox.lock（コミットする）
+  version = 1
+  [pbs]
+  release = "20261009"
+  [[pbs.asset]]
+  name = "cpython-3.12.15+20261009-x86_64-unknown-linux-gnu-install_only_stripped.tar.gz"
+  sha256 = "..."
+  ```
+- 社内ミラーは `PYBOX_PBS_MIRROR`（`<mirror>/<release>/<asset>` の形）で指定する。
 - アセット名は `cpython-{version}+{tag}-{triple}-{flavor}.tar.gz`。
   - triple: `x86_64-unknown-linux-gnu`、`aarch64-unknown-linux-gnu`、`x86_64-pc-windows-msvc`、`aarch64-pc-windows-msvc`（musl は対象外）。
   - flavor: 既定は `install_only_stripped`（デバッグシンボルなし）。`install_only` も選べる。`full`（`.tar.zst`）は使わない。標準ライブラリだけで扱えないため。Python 3.14 以降なら `compression.zstd` で扱える。
-- リリースの `SHA256SUMS` で検証する。キャッシュは `<cache>/pbs/` に置く。
+- 初回はリリースの `SHA256SUMS`、以降は `pybox.lock` の sha256 で検証する。ダウンロードは内容アドレスのキャッシュに置く。free-threaded 版とプレリリースは選ばない。
 - 後処理:
-  - Linux のシンボリックリンク（`python3 -> python3.12` など）を実体化する。zip や Windows では symlink を扱えないため。
-  - `pip` と `ensurepip` は**常に削除する**（pip は同梱しない）。
-  - オプションで `test/`、`idlelib/`、`tkinter` を削除する。
+  - Linux のシンボリックリンク（`python3 -> python3.12` など）は、dir と tar.gz ではそのまま保持する。zip 系の形式（exe の payload など）では実体化する。
+  - `pip`・`ensurepip` と、ビルドマシンの shebang が入った PBS 付属スクリプト（`2to3`・`idle`・`pydoc`）は**常に削除する**（pip は同梱しない）。
+  - `[tool.pybox.pbs].strip` のグループ単位で削除する。既定は `["dev", "test", "idlelib"]`。
+    - `dev`: ヘッダ、`libpython*.so`（約 32MB。Linux の `python3.X` は静的リンクなので実行には不要）、`*.a`、`config-*`、pkgconfig、man、Windows の `libs/`
+    - `test`: 標準ライブラリのテスト
+    - `idlelib`: IDLE
+    - `tkinter`: tkinter と Tcl/Tk（約 9MB。GUI に tkinter を使うアプリでは外さない）
+  - PBS の pyc はタイムスタンプ方式で、アーカイブ時に mtime を正規化すると無効になる。そのため、ビルド時に標準ライブラリも含めて `unchecked-hash` で作り直す（`compileall -f`）。ターゲットがホストで動くなら同梱インタプリタ自身で、そうでなければホスト用の PBS を取得してコンパイルする。
+  - 参考サイズ（3.12、x86_64 Linux、既定の strip）: 展開後約 76MB（インタプリタ 30MB、標準ライブラリ 37MB、Tcl/Tk 9MB）、tar.gz で約 26MB。
 - ライセンス: PBS とその依存（OpenSSL など）のライセンス表記を `licenses/` に同梱する。
 
 ---
@@ -187,7 +204,9 @@ pybox 自身はリゾルバを持たない。解決は標準ツール（uv / pip
   - bundled: PBS の sysconfig パスを、ターゲット OS 用にパスを計算して使う（Windows は `Lib/site-packages`、Linux は `lib/python3.X/site-packages`）。
   - system: `purelib = platlib = lib/`、`scripts = bin/`、`data = .`。
 - `RECORD`、`INSTALLER`（=`pybox <version>`）を書く。`direct_url.json`（PEP 610）は、ビルドしたホストの絶対パスが入って再現性を損なうため書かない。
-- **console script は installer の生成物を使わない。** 絶対パスの shebang が入って再配置できないため、pybox のランチャで置き換える。
+- **console script は installer の生成物を使わない。** 絶対パスの shebang が入って再配置できないため、次のように置き換える。
+  - アプリ自身の `console_scripts` / `gui_scripts`: バンドル直下に pybox ランチャを置く。
+  - 依存パッケージのスクリプト（例: `pygmentize`）: `python/bin` / `python/Scripts` に、相対パスでインタプリタを探すスクリプトを書く。Linux は `/bin/sh` と Python の polyglot（`'''exec' "$(dirname -- "$(realpath -- "$0")")/python3.X" -I "$0" "$@"`）、Windows は `%~dp0..\python.exe` を呼ぶ `.cmd`。
 - アプリ本体も wheel 化してから同じ経路でインストールする（「そのままインストールする」原則）。
 
 ---
@@ -196,10 +215,13 @@ pybox 自身はリゾルバを持たない。解決は標準ツール（uv / pip
 
 - **Rust 製**の小さなバイナリ。std と最小限の crate（zip 展開など）だけを使い、数百 KB を目標にする。
 - 事前ビルドしたもの（linux-gnu x86_64/aarch64、windows x86_64/aarch64、console/gui）を**pybox の wheel に同梱する**。distlib が `t64.exe` などを同梱しているのと同じ方式。こうすると pybox 本体は pure Python のままで、どのホストからでもクロスビルドできる。
-- 設定は実行ファイルに直接埋め込まない。隣の `pybox.json`（exe 形式では payload 内）を読む。ランチャ名（argv[0] の stem）で entry point を選ぶ、busybox 方式。
+- 設定は実行ファイルに直接埋め込まない。隣の `pybox.json`（exe 形式では payload 内）を読む。ランチャ名（実行ファイルの stem）で entry point を選ぶ、busybox 方式。名前が一致しない（リネームされた）場合は `default_entry_point` を使う。
+- 実行するコマンドは `<interpreter> <python-flags> -c "import sys; sys.argv.pop(0); from mod import f; sys.exit(f())" <ランチャのパス> <ユーザー引数>`。`-c` のプレースホルダを取り除くので、`sys.argv[0]` はランチャのパスになり、argparse の `prog` も通常の console script と同じになる。コードは pybox が生成してマニフェストに書くので、ランチャは中身を解釈しない。
+- ランチャ自体へのシンボリックリンク（`~/.local/bin` に置くなど）は、実体の場所まで解決してからバンドルを探す。
+- 起動に失敗した場合は `pybox-launcher: ...` を stderr に出して終了コード 1 で終わる。Windows の GUI 版では、コンソールが無いのでメッセージボックスで表示する。
 - プロセスモデル:
   - Linux: `execv` で python に置き換わる。PID とシグナルの扱いが自然になる。
-  - Windows: `CreateProcessW` で起動し、Job Object（`KILL_ON_JOB_CLOSE`）を付け、Ctrl-C は親で無視して子に任せ、子の終了コードを返す。
+  - Windows: 子プロセスとして起動して、その終了コードを返す。Ctrl-C / Ctrl-Break は親では無視し、コンソールを共有する子に任せる。子は Job Object（`KILL_ON_JOB_CLOSE | SILENT_BREAKAWAY_OK`）に入れ、ランチャが強制終了されたら Python も終わるようにする。SILENT_BREAKAWAY_OK により、Python がさらに起動したプロセスは Job に入らないので、アプリが常駐プロセスを起動しても巻き込まれない。
   - 将来の選択肢として、Windows で `python3XX.dll` をロードして `Py_Main` を呼ぶ、1 プロセス方式も検討する。
 - デバッグ用の環境変数（アプリの引数と衝突しないよう、引数ではなく環境変数で受け取る）:
   - `PYBOX_DEBUG=1`: 探索・展開の様子をログ出力する。
@@ -232,7 +254,7 @@ prune = ["**/tests/**", "**/*.pyi"]
 [tool.pybox.pbs]
 release = "20251014"
 flavor = "install_only_stripped"
-strip-stdlib = ["test", "idlelib", "tkinter"]   # pip / ensurepip は常に削除
+strip = ["dev", "test", "idlelib"]   # 既定値。pip / ensurepip は常に削除
 
 [[tool.pybox.target]]
 name = "linux"
@@ -391,8 +413,8 @@ packages/pybox/src/pybox/
 
 | Phase | 内容 | ねらい |
 |---|---|---|
-| 0 | Target モデル、pylock リーダ、wheel 選択、fetch、installer によるインストール、`lambda-zip` / `lambda-layer`、決定的な zip | ランチャ不要ですぐ役立つ。クロスビルドの土台を検証する |
-| 1 | PBS 取得、bundled の `dir` / `archive`、Rust ランチャ（dir モード、Linux / Windows） | PyInstaller onedir の代わりになる |
+| 0 ✅ | Target モデル、pylock リーダ、wheel 選択、fetch、installer によるインストール、`lambda-zip` / `lambda-layer`、決定的な zip | ランチャ不要ですぐ役立つ。クロスビルドの土台を検証する |
+| 1 ✅ | PBS 取得、bundled の `dir` / `archive`、Rust ランチャ（dir モード、Linux / Windows） | PyInstaller onedir の代わりになる |
 | 2 | `exe`（payload 連結、キャッシュ展開）、system モードの `dir` / `pyz` | 単一ファイル配布 |
 | 3 | `lambda-runtime`、bytecode 事前コンパイルの自動化、prune、SBOM、gui_scripts | Lambda の最適化と仕上げ |
 | 4 | Windows の Authenticode 署名手順、`Py_Main` 埋め込み方式の検討、macOS | 拡張 |

@@ -11,6 +11,7 @@ from packaging.specifiers import InvalidSpecifier, SpecifierSet
 from packaging.utils import NormalizedName, canonicalize_name
 
 from .errors import ConfigError
+from .pbs import FLAVORS, STRIP_GROUPS, PbsConfig
 from .target import Target, make_target
 
 Interpreter = Literal["bundled", "system"]
@@ -25,7 +26,7 @@ FORMATS: dict[str, int] = {
     "pyz": 2,
     "lambda-runtime": 3,
 }
-IMPLEMENTED_PHASE = 0
+IMPLEMENTED_PHASE = 1
 
 
 @dataclasses.dataclass(frozen=True)
@@ -57,10 +58,16 @@ class ProjectConfig:
     extras: tuple[str, ...]
     groups: tuple[str, ...] | None
     compile_bytecode: bool
+    python_flags: tuple[str, ...]
     prune: tuple[str, ...]
     find_links: tuple[Path, ...]
     targets: tuple[TargetConfig, ...]
     lambda_: LambdaConfig
+    pbs: PbsConfig
+
+    @property
+    def pbs_lock(self) -> Path:
+        return self.root / "pybox.lock"
 
     def target(self, name: str) -> TargetConfig:
         for t in self.targets:
@@ -76,6 +83,7 @@ _TOOL_KEYS = {
 }  # fmt: skip
 _TARGET_KEYS = {"name", "platform", "python", "glibc", "interpreter", "formats"}
 _LAMBDA_KEYS = {"handler", "layer-include-app"}
+_PBS_KEYS = {"release", "flavor", "strip"}
 
 
 def load(project_dir: Path) -> ProjectConfig:
@@ -154,11 +162,31 @@ def parse(data: dict[str, Any], root: Path) -> ProjectConfig:
         extras=tuple(_strs(tool.get("extras", []), "tool.pybox.extras")),
         groups=None if groups is None else tuple(_strs(groups, "tool.pybox.groups")),
         compile_bytecode=bool(tool.get("compile-bytecode", True)),
+        python_flags=tuple(_strs(tool.get("python-flags", ["-I"]), "tool.pybox.python-flags")),
         prune=tuple(_strs(tool.get("prune", []), "tool.pybox.prune")),
         find_links=tuple(root / p for p in _strs(tool.get("find-links", []), "find-links")),
         targets=targets,
         lambda_=lambda_cfg,
+        pbs=_parse_pbs(_table(tool, "pbs", "tool.pybox", required=False)),
     )
+
+
+def _parse_pbs(raw: dict[str, Any]) -> PbsConfig:
+    _check_keys(raw, _PBS_KEYS, "[tool.pybox.pbs]")
+    cfg = PbsConfig()
+    release = raw.get("release")
+    if release is not None and not (isinstance(release, str) and release.isdigit()):
+        raise ConfigError("[tool.pybox.pbs].release must be a release tag such as '20261009'")
+    flavor = raw.get("flavor", cfg.flavor)
+    if flavor not in FLAVORS:
+        raise ConfigError(f"[tool.pybox.pbs].flavor must be one of {', '.join(FLAVORS)}")
+    strip = tuple(_strs(raw.get("strip", list(cfg.strip)), "tool.pybox.pbs.strip"))
+    for group in strip:
+        if group not in STRIP_GROUPS:
+            raise ConfigError(
+                f"unknown [tool.pybox.pbs].strip group {group!r} (known: {', '.join(STRIP_GROUPS)})"
+            )
+    return PbsConfig(release=release, flavor=flavor, strip=strip)
 
 
 def make_target_config(
@@ -227,6 +255,14 @@ def _check_format(fmt: str, target: Target, interp: Interpreter, name: str) -> N
         raise ConfigError(f"target {name!r}: unknown format {fmt!r} (known: {', '.join(FORMATS)})")
     if FORMATS[fmt] > IMPLEMENTED_PHASE:
         raise ConfigError(f"target {name!r}: format {fmt!r} is not implemented yet")
+    if fmt in ("dir", "archive"):
+        if target.lambda_runtime:
+            raise ConfigError(f"target {name!r}: format {fmt!r} is not for Lambda targets")
+        if interp != "bundled":
+            raise ConfigError(
+                f"target {name!r}: format {fmt!r} with interpreter = 'system' "
+                "is not implemented yet"
+            )
     if fmt in ("lambda-zip", "lambda-layer"):
         if not target.lambda_runtime:
             raise ConfigError(f"target {name!r}: format {fmt!r} requires a lambda-* platform")

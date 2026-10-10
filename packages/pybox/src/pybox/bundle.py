@@ -7,7 +7,7 @@ import tempfile
 from collections.abc import Callable, Sequence
 from pathlib import Path
 
-from . import bytecode, log, prune
+from . import bytecode, log, pbs, prune
 from .config import ProjectConfig, TargetConfig
 from .errors import BuildError, ConfigError, ResolveError
 from .lock import Artifact, pipreport, pylock
@@ -23,6 +23,9 @@ class BuildContext:
     work: Path
     wheels: list[Wheel]
     compile_bytecode: bool
+    pbs_asset: pbs.Asset | None = None
+    bundled_root: Path | None = None
+    """Assembled bundled tree, shared by the bundled formats of one target."""
 
     @property
     def target(self) -> Target:
@@ -43,8 +46,12 @@ class BuildContext:
     def version(self) -> str:
         return self.cfg.version or self.app.version
 
+    @property
+    def artifact_stem(self) -> str:
+        return f"{self.cfg.name}-{self.version}-{self.tc.name}"
+
     def artifact_path(self, suffix: str) -> Path:
-        return self.out_dir / f"{self.cfg.name}-{self.version}-{self.tc.name}-{suffix}"
+        return self.out_dir / f"{self.artifact_stem}-{suffix}"
 
     def stage(self, fmt: str) -> Path:
         path = self.work / "stage" / fmt
@@ -62,11 +69,13 @@ FormatBuilder = Callable[[BuildContext], Path]
 
 
 def _builders() -> dict[str, FormatBuilder]:
-    from .formats import aws_lambda
+    from .formats import aws_lambda, bundled
 
     return {
         "lambda-zip": aws_lambda.build_zip,
         "lambda-layer": aws_lambda.build_layer,
+        "dir": bundled.build_dir,
+        "archive": bundled.build_archive,
     }
 
 
@@ -122,6 +131,16 @@ def build_target(
         if fmt not in builders:
             raise ConfigError(f"format {fmt!r} is not implemented yet")
 
+    asset: pbs.Asset | None = None
+    if tc.interpreter == "bundled":
+        asset = pbs.resolve(
+            cfg.pbs, tc.target.python_spec, pbs.target_triple(tc.target), cfg.pbs_lock
+        )
+        # The exact patch version is known now: use it for marker evaluation.
+        exact = dataclasses.replace(tc.target, python=asset.version, python_exact=True)
+        tc = dataclasses.replace(tc, target=exact)
+        log.debug(f"python-build-standalone {asset.release}: CPython {tc.target.python_minor}")
+
     artifacts = resolve(cfg, tc.target, find_lock(cfg, lock))
     with tempfile.TemporaryDirectory(prefix="pybox-") as tmp:
         work = Path(tmp)
@@ -134,6 +153,7 @@ def build_target(
             work=work,
             wheels=wheels,
             compile_bytecode=cfg.compile_bytecode if compile_bytecode is None else compile_bytecode,
+            pbs_asset=asset,
         )
         outputs: list[Path] = []
         for fmt in selected:

@@ -20,12 +20,15 @@ from collections.abc import Sequence
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
+from installer.sources import WheelFile
+from installer.utils import parse_entrypoints
 from packaging.tags import Tag
 from packaging.utils import InvalidWheelFilename, canonicalize_version, parse_wheel_filename
 
 from . import fetch, log
 from .errors import BuildError, FetchError
 from .lock import Artifact
+from .manifest import EntryPoint
 from .target import Target
 
 
@@ -37,6 +40,16 @@ class Wheel:
     @property
     def version(self) -> str:
         return str(parse_wheel_filename(self.path.name)[1])
+
+
+def entry_points(wheel: Path) -> list[EntryPoint]:
+    """console_scripts / gui_scripts declared by a wheel."""
+    with WheelFile.open(wheel) as source:
+        try:
+            text = source.read_dist_info("entry_points.txt")
+        except (KeyError, FileNotFoundError):
+            return []
+    return [EntryPoint(*ep) for ep in parse_entrypoints(text)]
 
 
 def is_compatible(filename: str, target: Target) -> bool:

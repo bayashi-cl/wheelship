@@ -97,7 +97,7 @@ def fetch(
 
 
 @functools.cache
-def _ssl_context() -> ssl.SSLContext:
+def ssl_context() -> ssl.SSLContext:
     # Use the OS trust store: python-build-standalone interpreters (incl. uv's)
     # often cannot locate the system CA bundle through OpenSSL's defaults.
     return truststore.SSLContext(ssl.PROTOCOL_TLS_CLIENT)
@@ -108,7 +108,7 @@ def _download(url: str, dest: Path, *, attempts: int = 3) -> None:
     for attempt in range(1, attempts + 1):
         try:
             with (
-                urllib.request.urlopen(req, timeout=60, context=_ssl_context()) as resp,
+                urllib.request.urlopen(req, timeout=60, context=ssl_context()) as resp,
                 dest.open("wb") as out,
             ):
                 shutil.copyfileobj(resp, out, _CHUNK)

@@ -18,14 +18,26 @@ uv run ruff check . && uv run ruff format --check . && uv run mypy
 cargo build                  # launcher (needs a Rust toolchain)
 ```
 
-## Usage (Phase 0: AWS Lambda)
+## Usage
 
 ```sh
 cd your-project
-uv export --format pylock.toml --no-dev -o pylock.toml
-uv run --project /path/to/this/repo pybox targets        # show tags / markers per target
-uv run --project /path/to/this/repo pybox build          # -> dist/*.zip
+uv export --format pylock.toml --no-dev -o pylock.toml   # lock dependencies (PEP 751)
+pybox targets                                            # show tags / markers per target
+pybox build                                              # all configured targets -> dist/
+pybox build -t linux -f archive                          # one target, one format
 pybox build --platform lambda-arm64 --python 3.13 -f lambda-zip   # ad-hoc target
 ```
 
-See `tests/fixtures/apps/lambda_app/pyproject.toml` for a `[tool.pybox]` example.
+Formats implemented so far: `lambda-zip`, `lambda-layer` (managed runtime) and
+`dir`, `archive` (bundled python-build-standalone interpreter + launcher).
+The python-build-standalone release is pinned in `pybox.lock` (commit it).
+Examples: `tests/fixtures/apps/*/pyproject.toml`.
+
+Launcher environment variables: `PYBOX_DEBUG=1` (show what is executed),
+`PYBOX_BOOT=python` (run the bundled interpreter directly).
+Build-time: `PYBOX_CACHE_DIR`, `PYBOX_PBS_MIRROR`, `PYBOX_LAUNCHER_DIR`,
+`PYBOX_BYTECODE_PYTHON`, `SOURCE_DATE_EPOCH`.
+
+During development the launcher is taken from `target/` after `cargo build --release`
+(host only); release wheels carry prebuilt launchers for every target (built in CI).
