@@ -37,6 +37,9 @@ Formats implemented so far:
 | `exe` | bundled or system | single file (`.exe` / `.bin`), extracted once into a cache |
 | `pyz` | system | PEP 441 zipapp |
 | `lambda-zip` / `lambda-layer` | Lambda managed runtime | deployment package / layer |
+| `lambda-runtime` | bundled (`provided.al2023`) | custom runtime: `bootstrap` + python-build-standalone + awslambdaric |
+
+Every target also gets a CycloneDX SBOM (`<name>-<version>-<target>.cdx.json`).
 
 `interpreter = "bundled"` ships python-build-standalone; `"system"` uses CPython of
 the target's version found on `PATH` (or `WHEELSHIP_PYTHON`).

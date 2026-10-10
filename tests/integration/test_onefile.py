@@ -199,6 +199,16 @@ def test_onefile_and_system_on_windows(tmp_path: Path) -> None:
     assert proc.returncode == 0, proc.stderr
     assert json.loads(proc.stdout)["mp"] == [1, 4, 9]
 
+    # gui_scripts: GUI-subsystem launcher + pythonw.exe (no console, no stdout).
+    assert main([*args, "-t", "windows", "-f", "archive"]) == 0
+    with zipfile.ZipFile(out / f"{STEM}-windows.zip") as zf:
+        zf.extractall(tmp_path / "b")
+    report = tmp_path / "gui.json"
+    gui = tmp_path / "b" / f"{STEM}-windows" / "cli-app-gui.exe"
+    proc = run(gui, "--write", str(report), "--exit", "9", cache=cache)
+    assert proc.returncode == 9, proc.stderr
+    assert json.loads(report.read_text())["executable"].lower().endswith("pythonw.exe")
+
     proc = run(out / f"{STEM}-windows-system.pyz", cache=cache, PYTHON=python)
     assert proc.returncode == 0, proc.stderr
     assert json.loads(proc.stdout)["native_ext"] == "_speedups.cp312-win_amd64.pyd"

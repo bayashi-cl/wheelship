@@ -14,6 +14,8 @@ from pathlib import Path
 
 from . import log
 
+_LICENSE_RE = re.compile(r"(^|/)(LICEN[CS]E|COPYING|NOTICE)[^/]*$", re.IGNORECASE)
+
 
 @lru_cache(maxsize=256)
 def compile_glob(pattern: str) -> re.Pattern[str]:
@@ -44,12 +46,13 @@ def matches(rel_path: str, patterns: Sequence[str]) -> bool:
     return any(compile_glob(p).fullmatch(rel_path) for p in patterns)
 
 
-def prune(root: Path, patterns: Sequence[str], *, warn_metadata: bool = True) -> int:
+def prune(root: Path, patterns: Sequence[str], *, warn: bool = True) -> int:
     """Delete matching files (and directories left empty). Returns the number of files removed."""
     if not patterns:
         return 0
     removed = 0
     metadata_hit = False
+    license_hit = False
     touched: set[str] = set()  # directories that lost an entry
     for dirpath, _dirnames, filenames in os.walk(root, topdown=False):
         for fn in filenames:
@@ -57,6 +60,8 @@ def prune(root: Path, patterns: Sequence[str], *, warn_metadata: bool = True) ->
             if matches(rel, patterns):
                 if ".dist-info/" in rel:
                     metadata_hit = True
+                if _LICENSE_RE.search(rel):
+                    license_hit = True
                 os.unlink(os.path.join(dirpath, fn))
                 removed += 1
                 touched.add(dirpath)
@@ -64,7 +69,9 @@ def prune(root: Path, patterns: Sequence[str], *, warn_metadata: bool = True) ->
         if dirpath in touched and dirpath != str(root) and not os.listdir(dirpath):
             os.rmdir(dirpath)
             touched.add(os.path.dirname(dirpath))
-    if metadata_hit and warn_metadata:
+    if metadata_hit and warn:
         log.warn("prune removed files inside *.dist-info; importlib.metadata may break")
+    if license_hit and warn:
+        log.warn("prune removed license files; redistribution may require them")
     log.debug(f"pruned {removed} files")
     return removed

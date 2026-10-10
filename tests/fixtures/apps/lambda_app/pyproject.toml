@@ -6,6 +6,8 @@ dependencies = [
     "markupsafe>=2.1",
     "attrs>=23",
     "colorama>=0.4; sys_platform == 'win32'",
+    # Runtime Interface Client, used by the lambda-runtime (custom runtime) target.
+    "awslambdaric>=3",
 ]
 
 [dependency-groups]
@@ -28,6 +30,12 @@ formats = ["lambda-zip", "lambda-layer"]
 name = "lambda-arm"
 platform = "lambda-arm64"
 formats = ["lambda-zip"]
+
+[[tool.wheelship.target]]
+name = "lambda-custom"
+platform = "lambda-x86_64"
+python = "3.14"                 # not offered as a managed runtime: bundled instead
+formats = ["lambda-runtime"]
 
 [tool.wheelship.lambda]
 handler = "lambda_app.handler:handler"

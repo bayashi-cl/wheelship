@@ -15,15 +15,16 @@ from ..install import Scheme, install_wheels
 from .package import app_entry_points, finalize, install_launchers, write_manifest
 
 
-def bundled_tree(ctx: BuildContext) -> Path:
+def install_into_pbs(
+    ctx: BuildContext, root: Path, *, extra_strip: tuple[str, ...] = ()
+) -> tuple[Path, pbs.Layout]:
+    """Extract and trim python-build-standalone into ``root/python`` and install
+    every wheel into its site-packages. Returns the python directory and layout."""
     asset, target, cfg = ctx.pbs_asset, ctx.target, ctx.cfg
     assert asset is not None, "bundled builds resolve python-build-standalone first"
-    eps = app_entry_points(ctx)
-
-    root = ctx.stage("bundled")
     log.info(f"  python-build-standalone: {asset.name}")
     python_dir = pbs.extract(pbs.download(asset), root)
-    pbs.trim(python_dir, target, cfg.pbs.strip)
+    pbs.trim(python_dir, target, dict.fromkeys((*cfg.pbs.strip, *extra_strip)))
 
     layout = pbs.Layout.for_target(target)
     scheme = Scheme(
@@ -44,6 +45,21 @@ def bundled_tree(ctx: BuildContext) -> Path:
         relocatable=True,
         python_flags=cfg.python_flags,
     )
+    return python_dir, layout
+
+
+def compile_pbs(ctx: BuildContext, root: Path, python_dir: Path, layout: pbs.Layout) -> None:
+    """prune + bytecode; the bundled interpreter compiles itself when it runs on the host."""
+    own = python_dir / layout.interpreter
+    runnable = pbs.target_triple(ctx.target) == pbs.host_triple()
+    finalize(ctx, root, python_dir, python=str(own) if runnable else None)
+
+
+def bundled_tree(ctx: BuildContext) -> Path:
+    target, cfg = ctx.target, ctx.cfg
+    eps = app_entry_points(ctx)
+    root = ctx.stage("bundled")
+    python_dir, layout = install_into_pbs(ctx, root)
 
     install_launchers(ctx, root, eps)
     write_manifest(
@@ -60,8 +76,5 @@ def bundled_tree(ctx: BuildContext) -> Path:
             wheelship_version=__version__,
         ),
     )
-    # The bundled interpreter itself can compile when it runs on the host.
-    own = python_dir / layout.interpreter
-    runnable = pbs.target_triple(target) == pbs.host_triple()
-    finalize(ctx, root, python_dir, python=str(own) if runnable else None)
+    compile_pbs(ctx, root, python_dir, layout)
     return root

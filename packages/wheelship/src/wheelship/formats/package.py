@@ -23,7 +23,7 @@ import struct
 from collections.abc import Sequence
 from pathlib import Path
 
-from .. import bytecode, launchers, log, manifest, prune
+from .. import bytecode, log, manifest, prune
 from ..bundle import BuildContext
 from ..errors import BuildError, ConfigError
 from ..manifest import EntryPoint
@@ -68,7 +68,7 @@ def install_launchers(ctx: BuildContext, root: Path, eps: Sequence[EntryPoint]) 
         dest = root / launcher_name(ctx, ep)
         if dest.exists():
             raise BuildError(f"entry point {ep.name!r} clashes with {dest.name} in the bundle")
-        shutil.copyfile(launchers.find(ctx.target, "gui" if ep.gui else "console"), dest)
+        shutil.copyfile(ctx.launcher("gui" if ep.gui else "console"), dest)
         dest.chmod(0o755)
 
 
@@ -129,7 +129,7 @@ def build_exe(ctx: BuildContext) -> Path:
     eps = app_entry_points(ctx)
     doc = json.loads((src / "wheelship.json").read_text(encoding="utf-8"))
     default = next(ep for ep in eps if ep.name == doc["default_entry_point"])
-    stub = launchers.find(ctx.target, "gui" if default.gui else "console").read_bytes()
+    stub = ctx.launcher("gui" if default.gui else "console").read_bytes()
 
     # The outer executable is the launcher: the per-script copies are not needed.
     root_launchers = {launcher_name(ctx, ep) for ep in eps}

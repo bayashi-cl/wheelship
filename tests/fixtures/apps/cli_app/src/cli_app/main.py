@@ -15,6 +15,7 @@ def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--exit", type=int, default=0)
     parser.add_argument("--mp", action="store_true", help="exercise multiprocessing (spawn)")
+    parser.add_argument("--write", help="also write the report to this file (GUI: no stdout)")
     parser.add_argument("rest", nargs="*")
     args = parser.parse_args()
 
@@ -37,7 +38,10 @@ def main():
         ctx = multiprocessing.get_context("spawn")
         with ctx.Pool(2) as pool:
             info["mp"] = pool.map(_square, [1, 2, 3])
-    print(json.dumps(info))
+    if args.write:
+        Path(args.write).write_text(json.dumps(info))
+    if sys.stdout is not None:  # None under pythonw
+        print(json.dumps(info))
     return args.exit
 
 

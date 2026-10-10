@@ -18,7 +18,10 @@ def by_name(artifacts: list) -> dict:  # type: ignore[type-arg]
 
 def test_fixture_lock_linux_lambda() -> None:
     arts = by_name(pylock.select(FIXTURE_LOCK, make_target("lambda-arm64", "3.12")))
-    assert set(arts) == {"attrs", "markupsafe", "lambda-app"}  # colorama is win32-only
+    # colorama is win32-only
+    assert set(arts) == {
+        "attrs", "markupsafe", "lambda-app", "awslambdaric", "simplejson", "snapshot-restore-py"
+    }  # fmt: skip
     ms = arts["markupsafe"]
     assert ms.kind == "wheel"
     assert ms.filename is not None and "cp312-cp312" in ms.filename

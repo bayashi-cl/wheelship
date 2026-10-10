@@ -147,7 +147,7 @@ myapp/
 |---|---|---|
 | `lambda-zip` | zip 直下に依存＋アプリ（`/var/task`） | handler は設定 `module:func` を Lambda 形式 `module.func` に変換して表示する |
 | `lambda-layer` | `python/` 配下 | `/opt/python` が `sys.path` に入る |
-| `lambda-runtime` | `bootstrap`、`python/`（PBS）、site-packages に `awslambdaric` | `bootstrap` は `exec "$LAMBDA_TASK_ROOT/python/bin/python3" -I -m awslambdaric "$_HANDLER"` 程度。AWS がまだ提供していない Python バージョン（新バージョン、free-threaded など）も動かせる |
+| `lambda-runtime` | `bootstrap`、`python/`（PBS）、site-packages に app と `awslambdaric` | `provided.al2023` 用のカスタムランタイム。`bootstrap` は `exec "$(dirname "$0")/python/bin/python3.X" -I -m awslambdaric "$_HANDLER"`。自分の場所を基準にするので、関数パッケージ（`/var/task`）としてもレイヤー（`/opt`）としても動く。AWS がマネージドランタイムを提供していない Python バージョンも動かせる |
 
 - ターゲットの既定値:
   - python3.12 以降のマネージドランタイムは AL2023（glibc 2.34）なので、`manylinux_2_34` 以下の wheel を受け入れる。python3.11 以前は AL2（glibc 2.26）なので `manylinux_2_26` 以下。
@@ -155,6 +155,19 @@ myapp/
 - `/var/task` は読み取り専用で、実行時に pyc を書けない。そのため**ビルド時に pyc を事前コンパイルする**（コールドスタート対策）。コンパイルにはターゲットと同じマイナーバージョンのインタプリタが必要なので、ホスト用の PBS を自動で取得して使う（pyc はプラットフォームに依存しない）。
 - サイズ上限（zip 50MB 直接アップロード / 展開後 250MB）を超えそうなら警告する。`--prune` で tests / `__pycache__` / `*.pyi` などを除く。`*.dist-info` は `importlib.metadata` が使うので**消さない**。
 - zip のエントリには Unix パーミッション（`external_attr`）を明示的に設定する。Windows 上でビルドしても `bootstrap` や `python3` が実行可能になる。
+- `lambda-runtime` の詳細:
+  - `awslambdaric`（AWS 公式の Runtime Interface Client）は、アプリの依存として pylock に入れてもらう（独自に同梱しない。ロックで版が固定され、SBOM にも載る）。無ければエラーにする。
+  - ターゲットは `lambda-*` プラットフォームで `formats = ["lambda-runtime"]` を指定する。インタプリタは自動で `bundled` になり、glibc は Python のバージョンに関係なく `provided.al2023` の 2.34 になる。
+  - 画面が無いので、`tkinter` を削除グループに自動で加える。zip では symlink が実体化されるため、`python/bin/python`・`python3` の alias は削除する（`bootstrap` は `python3.X` を直接呼ぶ）。
+  - 参考サイズ（3.14、x86_64）: zip 24MB、展開後 63MB。
+- 検証: AWS 公式のベースイメージ（`public.ecr.aws/lambda/python:3.12`、`public.ecr.aws/lambda/provided:al2023`）に同梱の Runtime Interface Emulator で、成果物を読み取り専用の `/var/task` に置いて実際に呼び出すテストを持つ（docker が使える環境のみ）。
+
+### 4.5 SBOM
+
+- ターゲットごとに CycloneDX 1.6 の JSON を成果物の隣に出力する（`<名前>-<版>-<ターゲット>.cdx.json`）。`[tool.wheelship].sbom = false` で無効にできる。
+- 内容: アプリ本体、インストールした各ディストリビューション（purl `pkg:pypi/...`、インストールした wheel の sha256、配布 URL、ライセンス）、同梱した PBS（版、アセットの sha256、ダウンロード URL）、成果物に入れたランチャ（sha256）。
+- ライセンスはコアメタデータから取る。`License-Expression`（PEP 639）があればそれを、無ければ Trove 分類子の名前を、それも無ければ `License` 欄（短いものだけ）を使う。分類子はバージョンが特定できないため SPDX ID には変換しない。
+- 決定的に出力する: タイムスタンプは `SOURCE_DATE_EPOCH`、`serialNumber` は内容のハッシュから作る UUIDv5。
 
 ---
 
@@ -187,7 +200,11 @@ myapp/
     - `tkinter`: tkinter と Tcl/Tk（約 9MB。GUI に tkinter を使うアプリでは外さない）
   - PBS の pyc はタイムスタンプ方式で、アーカイブ時に mtime を正規化すると無効になる。そのため、ビルド時に標準ライブラリも含めて `unchecked-hash` で作り直す（`compileall -f`）。ターゲットがホストで動くなら同梱インタプリタ自身で、そうでなければホスト用の PBS を取得してコンパイルする。
   - 参考サイズ（3.12、x86_64 Linux、既定の strip）: 展開後約 76MB（インタプリタ 30MB、標準ライブラリ 37MB、Tcl/Tk 9MB）、tar.gz で約 26MB。
-- ライセンス: PBS とその依存（OpenSSL など）のライセンス表記を `licenses/` に同梱する。
+- ライセンス:
+  - CPython の `LICENSE.txt` は削除対象にしない。
+  - PBS がリンクしている OpenSSL・SQLite・libffi などのライセンス文は `install_only` 版の配布物に含まれない（完全版アーカイブにだけある）。現状は SBOM に PBS の版と sha256 を記録するところまでで、ライセンス文の同梱は今後の課題。
+  - 依存パッケージのライセンスは、wheel の `.dist-info/licenses/`（PEP 639）がそのまま成果物に入る。`prune` でライセンスファイルを消すと警告する。
+  - ランチャ（Rust）が使っている crate のライセンス表記の生成は今後の課題。
 
 ---
 
@@ -427,7 +444,7 @@ packages/wheelship/src/wheelship/
 | 0 ✅ | Target モデル、pylock リーダ、wheel 選択、fetch、installer によるインストール、`lambda-zip` / `lambda-layer`、決定的な zip | ランチャ不要ですぐ役立つ。クロスビルドの土台を検証する |
 | 1 ✅ | PBS 取得、bundled の `dir` / `archive`、Rust ランチャ（dir モード、Linux / Windows） | PyInstaller onedir の代わりになる |
 | 2 ✅ | `exe`（payload 連結、キャッシュ展開）、system モードの `dir` / `archive` / `exe` / `pyz` | 単一ファイル配布 |
-| 3 | `lambda-runtime`、bytecode 事前コンパイルの自動化、prune、SBOM、gui_scripts | Lambda の最適化と仕上げ |
+| 3 ✅ | `lambda-runtime`、bytecode 事前コンパイルの自動化、prune、SBOM、gui_scripts | Lambda の最適化と仕上げ |
 | 4 | Windows の Authenticode 署名手順、`Py_Main` 埋め込み方式の検討、macOS | 拡張 |
 
 ## 13. テスト方針

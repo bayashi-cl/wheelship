@@ -88,11 +88,6 @@ handler = "my_app.h:handler"
             "unknown format",
         ),
         (
-            "[tool.wheelship]\npython='3.12'\n[[tool.wheelship.target]]\nname='a'\n"
-            "platform='lambda-x86_64'\nformats=['lambda-runtime']",
-            "not implemented",
-        ),
-        (
             "[tool.wheelship]\npython='3.12'\n[[tool.wheelship.target]]\nname='a'\nplatform='lambda-arm64'"
             "\n[[tool.wheelship.target]]\nname='a'\nplatform='lambda-x86_64'",
             "duplicate",

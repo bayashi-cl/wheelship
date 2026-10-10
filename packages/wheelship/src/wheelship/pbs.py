@@ -306,8 +306,8 @@ def strip_patterns(target: Target, groups: Iterable[str]) -> list[str]:
 
 
 def trim(python_dir: Path, target: Target, groups: Iterable[str]) -> None:
-    # Removing pip's own *.dist-info is intended: no metadata warning.
-    removed = prune.prune(python_dir, strip_patterns(target, groups), warn_metadata=False)
+    # Removing pip (its metadata and licenses included) is intended: no warnings.
+    removed = prune.prune(python_dir, strip_patterns(target, groups), warn=False)
     log.debug(f"trimmed {removed} files from python-build-standalone")
 
 

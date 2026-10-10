@@ -16,17 +16,7 @@ from .target import Target, make_target
 
 Interpreter = Literal["bundled", "system"]
 
-#: All formats in the design; the value is the phase that implements it.
-FORMATS: dict[str, int] = {
-    "lambda-zip": 0,
-    "lambda-layer": 0,
-    "dir": 1,
-    "archive": 1,
-    "exe": 2,
-    "pyz": 2,
-    "lambda-runtime": 3,
-}
-IMPLEMENTED_PHASE = 2
+FORMATS = ("dir", "archive", "exe", "pyz", "lambda-zip", "lambda-layer", "lambda-runtime")
 
 
 @dataclasses.dataclass(frozen=True)
@@ -58,6 +48,7 @@ class ProjectConfig:
     extras: tuple[str, ...]
     groups: tuple[str, ...] | None
     compile_bytecode: bool
+    sbom: bool
     python_flags: tuple[str, ...]
     prune: tuple[str, ...]
     find_links: tuple[Path, ...]
@@ -79,7 +70,7 @@ class ProjectConfig:
 
 _TOOL_KEYS = {
     "lock", "python", "interpreter", "extras", "groups", "compile-bytecode",
-    "prune", "find-links", "target", "lambda", "python-flags", "pbs",
+    "prune", "find-links", "target", "lambda", "python-flags", "pbs", "sbom",
 }  # fmt: skip
 _TARGET_KEYS = {"name", "platform", "python", "glibc", "interpreter", "formats"}
 _LAMBDA_KEYS = {"handler", "layer-include-app"}
@@ -162,6 +153,7 @@ def parse(data: dict[str, Any], root: Path) -> ProjectConfig:
         extras=tuple(_strs(tool.get("extras", []), "tool.wheelship.extras")),
         groups=None if groups is None else tuple(_strs(groups, "tool.wheelship.groups")),
         compile_bytecode=bool(tool.get("compile-bytecode", True)),
+        sbom=bool(tool.get("sbom", True)),
         python_flags=tuple(_strs(tool.get("python-flags", ["-I"]), "tool.wheelship.python-flags")),
         prune=tuple(_strs(tool.get("prune", []), "tool.wheelship.prune")),
         find_links=tuple(root / p for p in _strs(tool.get("find-links", []), "find-links")),
@@ -213,13 +205,18 @@ def make_target_config(
             f"target {name!r}: Python {python} does not satisfy "
             f"requires-python {str(requires_python)!r}"
         )
-    if interpreter is None:
-        # Lambda managed runtimes provide the interpreter.
-        interp: Interpreter = "system" if target.lambda_runtime else default_interpreter
+    if interpreter is not None:
+        interp: Interpreter = _interpreter(interpreter, f"target {name!r} interpreter")
+    elif target.lambda_runtime:
+        # Managed runtimes provide the interpreter; a custom runtime bundles one.
+        interp = "bundled" if formats and "lambda-runtime" in formats else "system"
     else:
-        interp = _interpreter(interpreter, f"target {name!r} interpreter")
+        interp = default_interpreter
     if formats is None:
         formats = ["lambda-zip"] if target.lambda_runtime else ["dir"]
+    if target.lambda_runtime and interp == "bundled" and glibc is None:
+        # Custom runtimes run on provided.al2023 (glibc 2.34) whatever the Python.
+        target = dataclasses.replace(target, glibc=(2, 34))
     for fmt in formats:
         _check_format(fmt, target, interp, name)
     return TargetConfig(name, target, interp, tuple(formats))
@@ -254,14 +251,20 @@ def _parse_target(
 def _check_format(fmt: str, target: Target, interp: Interpreter, name: str) -> None:
     if fmt not in FORMATS:
         raise ConfigError(f"target {name!r}: unknown format {fmt!r} (known: {', '.join(FORMATS)})")
-    if FORMATS[fmt] > IMPLEMENTED_PHASE:
-        raise ConfigError(f"target {name!r}: format {fmt!r} is not implemented yet")
     if fmt in ("dir", "archive", "exe", "pyz") and target.lambda_runtime:
         raise ConfigError(f"target {name!r}: format {fmt!r} is not for Lambda targets")
     if fmt == "pyz" and interp != "system":
         raise ConfigError(
             f"target {name!r}: 'pyz' runs on the target's interpreter; set interpreter = 'system'"
         )
+    if fmt == "lambda-runtime":
+        if not target.lambda_runtime:
+            raise ConfigError(f"target {name!r}: 'lambda-runtime' requires a lambda-* platform")
+        if interp != "bundled":
+            raise ConfigError(
+                f"target {name!r}: 'lambda-runtime' bundles the interpreter; "
+                "set interpreter = 'bundled'"
+            )
     if fmt in ("lambda-zip", "lambda-layer"):
         if not target.lambda_runtime:
             raise ConfigError(f"target {name!r}: format {fmt!r} requires a lambda-* platform")

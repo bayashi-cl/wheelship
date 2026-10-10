@@ -7,7 +7,7 @@ import tempfile
 from collections.abc import Callable, Sequence
 from pathlib import Path
 
-from . import bytecode, log, pbs, prune
+from . import bytecode, launchers, log, pbs, prune, sbom
 from .config import ProjectConfig, TargetConfig
 from .errors import BuildError, ConfigError, ResolveError
 from .lock import Artifact, pipreport, pylock
@@ -24,6 +24,8 @@ class BuildContext:
     wheels: list[Wheel]
     compile_bytecode: bool
     pbs_asset: pbs.Asset | None = None
+    launchers_used: dict[str, Path] = dataclasses.field(default_factory=dict)
+    """Launcher kind ("console"/"gui") -> binary placed into an artifact (for the SBOM)."""
     tree_root: Path | None = None
     """Assembled bundle tree, shared by the dir/archive/exe/pyz formats of one target."""
 
@@ -53,6 +55,11 @@ class BuildContext:
     def artifact_path(self, suffix: str) -> Path:
         return self.out_dir / f"{self.artifact_stem}-{suffix}"
 
+    def launcher(self, kind: launchers.Kind) -> Path:
+        path = launchers.find(self.target, kind)
+        self.launchers_used[kind] = path
+        return path
+
     def stage(self, fmt: str) -> Path:
         path = self.work / "stage" / fmt
         path.mkdir(parents=True)
@@ -74,6 +81,7 @@ def _builders() -> dict[str, FormatBuilder]:
     return {
         "lambda-zip": aws_lambda.build_zip,
         "lambda-layer": aws_lambda.build_layer,
+        "lambda-runtime": aws_lambda.build_runtime,
         "dir": package.build_dir,
         "archive": package.build_archive,
         "exe": package.build_exe,
@@ -164,4 +172,6 @@ def build_target(
                 outputs.append(builders[fmt](ctx))
             except OSError as e:
                 raise BuildError(f"{fmt}: {e}") from e
+        if cfg.sbom:
+            outputs.append(sbom.write(ctx))
         return outputs
