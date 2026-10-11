@@ -15,3 +15,7 @@ build/
 # Prebuilt launchers are placed by CI, never committed
 /packages/wheelship/src/wheelship/_launchers/*
 !/packages/wheelship/src/wheelship/_launchers/.gitkeep
+
+# Docs
+/site/
+.cache/
