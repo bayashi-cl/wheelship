@@ -101,13 +101,30 @@ def test_uv_lock_of_another_project(tmp_path: Path) -> None:
         bundle.resolve(cfg, LINUX, bundle.find_lock(cfg, None), tmp_path / "w")
 
 
-@needs_uv
-def test_explicit_uv_lock_elsewhere(tmp_path: Path) -> None:
-    # uv exports the member's own workspace; paths must not resolve against this copy.
-    shutil.copy(WORKSPACE / "uv.lock", tmp_path / "uv.lock")
-    cfg = config.load(MEMBER)
-    with pytest.raises(ResolveError, match="does not belong"):
-        bundle.resolve(cfg, LINUX, bundle.find_lock(cfg, tmp_path / "uv.lock"), tmp_path / "w")
+def export_data(path: str) -> dict:  # type: ignore[type-arg]
+    return {"packages": [{"name": "ws-app", "directory": {"path": path, "editable": True}}]}
+
+
+@pytest.mark.parametrize(
+    ("path", "base"),
+    [
+        ("packages/app", WORKSPACE),  # uv <= 0.12.19: relative to the workspace root
+        (".", MEMBER),  # uv >= 0.12.20: relative to the working directory
+        (str(MEMBER.as_posix()), MEMBER),  # absolute
+    ],
+)
+def test_path_base(path: str, base: Path) -> None:
+    assert uv.path_base(config.load(MEMBER), export_data(path)) == base
+
+
+@pytest.mark.parametrize("path", ["packages/other", "../app", "x/packages/app"])
+def test_path_base_mismatch(path: str) -> None:
+    with pytest.raises(ResolveError, match="which is not"):
+        uv.path_base(config.load(MEMBER), export_data(path))
+
+
+def test_path_base_without_project() -> None:
+    assert uv.path_base(config.load(MEMBER), {"packages": []}) == MEMBER
 
 
 def test_missing_uv(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:

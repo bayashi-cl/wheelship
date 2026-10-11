@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import dataclasses
-import os
 import tempfile
 from collections.abc import Callable, Sequence
 from pathlib import Path
@@ -102,11 +101,11 @@ def find_lock(cfg: ProjectConfig, override: Path | None) -> Path | None:
 
 def resolve(cfg: ProjectConfig, target: Target, lock: Path | None, work: Path) -> list[Artifact]:
     if lock is not None and lock.name == uv.LOCK_NAME:
-        log.info(f"resolving from {os.path.relpath(lock, cfg.root)} (uv export) for {target}")
+        shown = lock.name if lock.parent == cfg.root else lock
+        log.info(f"resolving from {shown} (uv export) for {target}")
         # extras and groups are already applied by uv (see lock.uv).
-        exported = uv.export(cfg, work / "uv-export")
-        artifacts = pylock.select(exported, target, base=lock.parent)
-        _check_uv_project(cfg, lock, artifacts)
+        exported, base = uv.export(cfg, work / "uv-export")
+        artifacts = pylock.select(exported, target, base=base)
     elif lock is not None:
         log.info(f"resolving from {lock.name} for {target}")
         artifacts = pylock.select(lock, target, extras=cfg.extras, groups=cfg.groups)
@@ -130,17 +129,6 @@ def resolve(cfg: ProjectConfig, target: Target, lock: Path | None, work: Path) -
     for a in artifacts:
         log.debug(a.describe())
     return artifacts
-
-
-def _check_uv_project(cfg: ProjectConfig, lock: Path, artifacts: list[Artifact]) -> None:
-    # uv picks the workspace itself; a uv.lock found above an unrelated project
-    # (or set explicitly) would give paths relative to the wrong root.
-    for a in artifacts:
-        if a.name == cfg.name and a.kind == "directory" and a.path != cfg.root:
-            raise ResolveError(
-                f"{lock} does not belong to {cfg.root} (uv exported the project at {a.path}); "
-                "set [tool.wheelship].lock to the project's uv.lock or a pylock.toml"
-            )
 
 
 def build_target(

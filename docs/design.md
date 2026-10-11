@@ -222,8 +222,8 @@ myapp/
      - workspace のメンバーは、カレントディレクトリから uv が自動で選ぶ。`--package` は付けない。
      - `--locked` を付けるので `uv.lock` は書き換えない。`pyproject.toml` とずれていればエラーにする。`uv-export-args` に `--frozen` があるときは `--locked` を付けない。
    - uv はエクスポートに extras / groups をマーカーとしては書かず、選んだ結果だけを出力する。そのため `[tool.wheelship]` の `extras` / `groups` は uv の引数に変換する。`groups` を省略したときは `--no-default-groups` になり、dev などの default groups は入らない。
-   - エクスポート中のパスは workspace のルート（`uv.lock` のあるディレクトリ）からの相対パスになる。`-o` で出力先を変えても同じ。そのため、パスは `uv.lock` のディレクトリを基準に解決する。
-   - uv は workspace を自分で決めるので、別の `uv.lock` を明示するとパスの基準がずれる。アプリ自身の directory エントリが `pyproject.toml` のディレクトリを指していなければエラーにする。
+   - エクスポート中の相対パスの基準は uv のバージョンで変わる。uv 0.12.19 までは workspace のルート（`uv.lock` のあるディレクトリ）が基準で、`-o` で出力先を変えても同じ。uv 0.12.20 からは PEP 751 のとおり出力ファイルのディレクトリが基準で、標準出力に書いたときは実行ディレクトリが基準になる。そのため、アプリ自身の directory エントリが `pyproject.toml` のディレクトリを指すことを手がかりに、エクスポート結果から基準を逆算する（`lock.uv.path_base`）。エクスポートにアプリが含まれないとき（`--no-emit-project`）は、uv 0.12.20 以降の挙動を前提にする。
+   - uv は使う `uv.lock` を自分で決める。`lock` / `--lock` で `uv.lock` を指定した場合、それは「uv からエクスポートする」という意味になり、ファイルの場所そのものは使わない。
    - エクスポートの方法を完全に自分で決めたいとき（uv を使わない、独自のパイプラインがある）は、自分で `pylock.toml` を作って 1. で指定する。任意のシェルコマンドを設定で受け付けることはしない。出力先、パスの基準、extras/groups との整合を wheelship が保証できなくなるため。
 2. **代替**: ロックが無い場合、Target ごとに次を実行してレポートを入力にする。
    `pip install --dry-run --ignore-installed --report - --only-binary=:all: --platform <tags> --python-version <v> --implementation cp --abi <abi> -r ...`
