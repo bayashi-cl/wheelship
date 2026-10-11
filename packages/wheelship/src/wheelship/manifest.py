@@ -80,13 +80,16 @@ def build(
     wheelship_version: str,
     interpreter: str | None = None,
     gui_interpreter: str | None = None,
+    library: str | None = None,
 ) -> dict[str, Any]:
     """The manifest document.
 
     bundled: ``interpreter``/``gui_interpreter`` are paths relative to the root;
     entry points run generated ``-c`` code. system: the launcher finds an
     interpreter on ``PATH`` and runs the boot script, which checks the ABI and
-    adds ``lib/`` to ``sys.path``.
+    adds ``lib/`` to ``sys.path``. ``library`` (bundled, Windows) is the
+    ``python3XX.dll`` the launcher loads instead of spawning the interpreter
+    when ``WHEELSHIP_EMBED=1`` (experimental).
     """
     interp: dict[str, Any] = {
         "mode": mode,
@@ -98,6 +101,8 @@ def build(
         if interpreter is None:
             raise ValueError("bundled manifests need the interpreter path")
         interp |= {"path": interpreter, "gui_path": gui_interpreter}
+        if library is not None:
+            interp["library"] = library
     else:
         interp["candidates"] = system_candidates(target)
 

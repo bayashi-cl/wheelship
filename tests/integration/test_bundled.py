@@ -155,6 +155,7 @@ def test_windows_cross_build(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) ->
     assert not any(n.startswith(site + "pip") for n in names)
     assert site + "pygments/__pycache__/__init__.cpython-312.pyc" in names
     assert manifest["interpreter"]["gui_path"] == "python/pythonw.exe"
+    assert root + manifest["interpreter"]["library"] in names  # python/python312.dll
     assert manifest["entry_points"]["cli-app-gui"]["gui"] is True
 
 

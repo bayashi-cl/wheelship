@@ -27,6 +27,7 @@ def main():
         "rest": args.rest,
         "executable": sys.executable,
         "prefix": sys.prefix,
+        "pid": os.getpid(),
         "isolated": sys.flags.isolated,
         "cwd_in_path": os.getcwd() in sys.path or "" in sys.path,
         "native_ext": Path(_speedups.__file__).name,

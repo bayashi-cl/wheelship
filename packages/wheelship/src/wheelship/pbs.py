@@ -323,11 +323,14 @@ class Layout:
     site_packages: str
     scripts: str
     include: str
+    #: The shared libpython; set where the launcher may embed it (Windows).
+    library: str | None = None
 
     @classmethod
     def for_target(cls, target: Target) -> Layout:
         if target.os == "windows":
-            return cls("python.exe", "pythonw.exe", "Lib/site-packages", "Scripts", "include")
+            dll = f"python{target.python[0]}{target.python[1]}.dll"
+            return cls("python.exe", "pythonw.exe", "Lib/site-packages", "Scripts", "include", dll)
         minor = target.python_minor
         return cls(f"bin/python{minor}", None, f"lib/python{minor}/site-packages", "bin", "include")
 

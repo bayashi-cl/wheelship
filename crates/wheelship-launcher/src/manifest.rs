@@ -40,6 +40,9 @@ pub struct Interpreter {
     /// Bundled: Windows `pythonw.exe` for gui entry points.
     #[serde(default)]
     pub gui_path: Option<String>,
+    /// Bundled: the shared libpython (`python3XX.dll`) for in-process embedding.
+    #[serde(default)]
+    pub library: Option<String>,
     /// System: programs to look up on `PATH`, in order.
     #[serde(default)]
     pub candidates: Vec<Candidate>,

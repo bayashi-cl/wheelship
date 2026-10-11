@@ -140,10 +140,12 @@ def test_layout() -> None:
     assert (win.interpreter, win.gui_interpreter, win.site_packages) == (
         "python.exe", "pythonw.exe", "Lib/site-packages"
     )  # fmt: skip
+    assert win.library == "python312.dll"
     lin = pbs.Layout.for_target(make_target("linux-aarch64", "3.13"))
     assert (lin.interpreter, lin.site_packages) == (
         "bin/python3.13", "lib/python3.13/site-packages"
     )  # fmt: skip
+    assert lin.library is None
 
 
 def test_launcher_lookup(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:

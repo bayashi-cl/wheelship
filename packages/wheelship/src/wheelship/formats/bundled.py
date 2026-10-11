@@ -71,6 +71,7 @@ def bundled_tree(ctx: BuildContext) -> Path:
             mode="bundled",
             interpreter=f"python/{layout.interpreter}",
             gui_interpreter=f"python/{layout.gui_interpreter}" if layout.gui_interpreter else None,
+            library=f"python/{layout.library}" if layout.library else None,
             python_flags=cfg.python_flags,
             entry_points=eps,
             wheelship_version=__version__,

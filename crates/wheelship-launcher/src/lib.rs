@@ -15,7 +15,9 @@
 //! On Unix the launcher `exec`s the interpreter (same PID, natural signals).
 //! On Windows it spawns the interpreter, ignores Ctrl-C itself (the child gets
 //! it from the shared console), ties the child's lifetime to its own through a
-//! job object, and exits with the child's exit code.
+//! job object, and exits with the child's exit code. Experimental: with
+//! `WHEELSHIP_EMBED=1` a bundled Windows launcher instead loads the
+//! interpreter's DLL and runs `Py_Main` in its own process (see [`embed_args`]).
 //!
 //! Environment variables (never command-line flags, to avoid clashing with the
 //! application's own arguments):
@@ -23,6 +25,7 @@
 //! * `WHEELSHIP_BOOT=python` run the interpreter with the given arguments
 //! * `WHEELSHIP_PYTHON`      interpreter to use for system-interpreter bundles
 //! * `WHEELSHIP_CACHE_DIR`   where single-file executables are extracted
+//! * `WHEELSHIP_EMBED=1`     Windows, bundled: run Python inside the launcher
 
 use std::ffi::OsString;
 use std::fs::File;
@@ -45,12 +48,19 @@ pub enum Subsystem {
 pub struct Invocation {
     pub program: PathBuf,
     pub args: Vec<OsString>,
+    /// Load this libpython and call `Py_Main(args)` instead of running `program`.
+    pub embed: Option<PathBuf>,
 }
+
+/// `-X` option carrying the interpreter path into an embedded interpreter.
+const EXECUTABLE_XOPTION: &str = "wheelship.executable";
 
 /// Process environment as seen by [`plan`]; injected for testability.
 pub struct Env<'a> {
     pub boot: Option<OsString>,
     pub python: Option<OsString>,
+    /// Embed the interpreter when the manifest allows it (`WHEELSHIP_EMBED=1`).
+    pub embed: bool,
     /// Resolve a program name on `PATH`.
     pub which: &'a dyn Fn(&str) -> Option<PathBuf>,
 }
@@ -79,15 +89,22 @@ fn launch() -> Result<i32, String> {
     let env = Env {
         boot: std::env::var_os("WHEELSHIP_BOOT"),
         python: std::env::var_os("WHEELSHIP_PYTHON"),
+        embed: cfg!(windows) && std::env::var_os("WHEELSHIP_EMBED").is_some_and(|v| v == "1"),
         which: &which,
     };
     let invocation = plan(&manifest, &root, &exe, user_args, &env)?;
     if debug_enabled() {
         eprintln!("wheelship-launcher: bundle root: {}", root.display());
-        eprintln!(
-            "wheelship-launcher: exec {:?} {:?}",
-            invocation.program, invocation.args
-        );
+        match &invocation.embed {
+            Some(library) => eprintln!(
+                "wheelship-launcher: embed {:?} Py_Main {:?}",
+                library, invocation.args
+            ),
+            None => eprintln!(
+                "wheelship-launcher: exec {:?} {:?}",
+                invocation.program, invocation.args
+            ),
+        }
     }
     platform::run(invocation)
 }
@@ -122,7 +139,11 @@ pub fn plan(
         }
         let (program, mut args) = interpreter(manifest, root, false, env)?;
         args.extend(user_args);
-        return Ok(Invocation { program, args });
+        return Ok(Invocation {
+            program,
+            args,
+            embed: None,
+        });
     }
 
     let name = exe
@@ -158,7 +179,68 @@ pub fn plan(
     );
     args.push(exe.as_os_str().to_owned());
     args.extend(user_args);
-    Ok(Invocation { program, args })
+
+    let library = match (&manifest.interpreter, env.embed) {
+        (
+            Interpreter {
+                mode: Mode::Bundled,
+                library: Some(library),
+                ..
+            },
+            true,
+        ) => Some(join_relative(root, library)),
+        _ => None,
+    };
+    if let Some(library) = library {
+        let args = embed_args(&program, exe, args)?;
+        return Ok(Invocation {
+            program,
+            args,
+            embed: Some(library),
+        });
+    }
+    Ok(Invocation {
+        program,
+        args,
+        embed: None,
+    })
+}
+
+/// `Py_Main` argv for running `python <args>` inside the launcher process.
+///
+/// The interpreter then sees the launcher as `sys.executable`, which would make
+/// `multiprocessing` and `subprocess.run([sys.executable, ...])` start the
+/// application instead of Python. The real interpreter path is therefore passed
+/// as `-X wheelship.executable=PATH` (no quoting issues) and the `-c` code is
+/// prefixed with an assignment restoring `sys.executable`. `sys.prefix` is
+/// found by CPython from the DLL location (`python/Lib/os.py` next to it).
+pub fn embed_args(
+    program: &Path,
+    exe: &Path,
+    args: Vec<OsString>,
+) -> Result<Vec<OsString>, String> {
+    let code_at = args
+        .iter()
+        .position(|a| a == "-c")
+        .map(|i| i + 1)
+        .filter(|&i| i < args.len())
+        .ok_or("embedding needs a '-c' entry point")?;
+    let mut xoption = OsString::from(format!("{EXECUTABLE_XOPTION}="));
+    xoption.push(program);
+    let mut out = vec![exe.as_os_str().to_owned(), "-X".into(), xoption];
+    for (i, arg) in args.into_iter().enumerate() {
+        if i == code_at {
+            let mut code = OsString::from(format!(
+                "import sys; sys.executable = sys._base_executable = \
+                 sys._xoptions.pop({EXECUTABLE_XOPTION:?}); "
+            ));
+            code.push(arg);
+            out.push(code);
+        } else {
+            out.push(arg);
+        }
+    }
+    Ok(out)
 }
 
 /// The interpreter program and the arguments that must precede everything else.
@@ -313,6 +395,7 @@ mod platform {
     use std::process::Command;
 
     pub fn run(invocation: Invocation) -> Result<i32, String> {
+        debug_assert!(invocation.embed.is_none(), "embedding is Windows-only");
         let err = Command::new(&invocation.program)
             .args(&invocation.args)
             .exec();
@@ -330,7 +413,10 @@ mod platform {
 #[cfg(windows)]
 mod platform {
     use super::Invocation;
+    use std::ffi::{OsStr, OsString};
+    use std::os::windows::ffi::OsStrExt;
     use std::os::windows::io::AsRawHandle;
+    use std::path::Path;
     use std::process::Command;
 
     use windows_sys::Win32::Foundation::{FALSE, HANDLE, TRUE};
@@ -341,6 +427,9 @@ mod platform {
         AssignProcessToJobObject, CreateJobObjectW, JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE,
         JOB_OBJECT_LIMIT_SILENT_BREAKAWAY_OK, JOBOBJECT_EXTENDED_LIMIT_INFORMATION,
         JobObjectExtendedLimitInformation, SetInformationJobObject,
+    };
+    use windows_sys::Win32::System::LibraryLoader::{
+        GetProcAddress, LOAD_WITH_ALTERED_SEARCH_PATH, LoadLibraryExW,
     };
     use windows_sys::Win32::UI::WindowsAndMessaging::{MB_ICONERROR, MB_OK, MessageBoxW};
     use windows_sys::core::BOOL;
@@ -378,7 +467,43 @@ mod platform {
         }
     }
 
+    /// Run the interpreter in this process: `Py_Main` from the bundled DLL.
+    /// Python installs its own Ctrl-C handling, and there is no child to
+    /// supervise, so neither the console handler nor the job object is needed.
+    fn embed(library: &Path, args: &[OsString]) -> Result<i32, String> {
+        let wide = |s: &OsStr| s.encode_wide().chain(Some(0)).collect::<Vec<u16>>();
+        // ALTERED_SEARCH_PATH: the DLL's own dependencies (vcruntime140.dll,
+        // python3.dll) resolve from its directory, not the launcher's.
+        let module = unsafe {
+            LoadLibraryExW(
+                wide(library.as_os_str()).as_ptr(),
+                std::ptr::null_mut(),
+                LOAD_WITH_ALTERED_SEARCH_PATH,
+            )
+        };
+        if module.is_null() {
+            return Err(format!(
+                "cannot load {}: {}",
+                library.display(),
+                std::io::Error::last_os_error()
+            ));
+        }
+        let symbol = unsafe { GetProcAddress(module, c"Py_Main".as_ptr().cast()) }
+            .ok_or_else(|| format!("{} does not export Py_Main", library.display()))?;
+        // int Py_Main(int argc, wchar_t **argv): unchanged since Python 3.0.
+        type PyMain = unsafe extern "C" fn(i32, *mut *mut u16) -> i32;
+        let py_main: PyMain = unsafe { std::mem::transmute(symbol) };
+        let mut storage: Vec<Vec<u16>> = args.iter().map(|a| wide(a)).collect();
+        let mut argv: Vec<*mut u16> = storage.iter_mut().map(|a| a.as_mut_ptr()).collect();
+        let argc = argv.len() as i32;
+        argv.push(std::ptr::null_mut());
+        Ok(unsafe { py_main(argc, argv.as_mut_ptr()) })
+    }
+
     pub fn run(invocation: Invocation) -> Result<i32, String> {
+        if let Some(library) = &invocation.embed {
+            return embed(library, &invocation.args);
+        }
         unsafe {
             SetConsoleCtrlHandler(Some(ignore_interrupts), TRUE);
         }
@@ -440,6 +565,7 @@ mod tests {
         Env {
             boot: boot.map(OsString::from),
             python: None,
+            embed: false,
             which: &no_path,
         }
     }
@@ -530,6 +656,7 @@ mod tests {
         let e = Env {
             boot: None,
             python: None,
+            embed: false,
             which: &only_python312,
         };
         let inv = plan(&m, root, &root.join("tool"), os(&["x"]), &e).unwrap();
@@ -559,6 +686,7 @@ mod tests {
         let e = Env {
             boot: None,
             python: None,
+            embed: false,
             which: &py,
         };
         let inv = plan(&m, root, &root.join("tool"), vec![], &e).unwrap();
@@ -575,6 +703,7 @@ mod tests {
         let e = Env {
             boot: None,
             python: Some("/x/python".into()),
+            embed: false,
             which: &no_path,
         };
         let inv = plan(&m, root, &root.join("tool"), vec![], &e).unwrap();
@@ -582,6 +711,74 @@ mod tests {
         assert_eq!(inv.args[0], OsString::from("-I")); // no candidate args with an override
         let err = plan(&m, root, &root.join("tool"), vec![], &env(None)).unwrap_err();
         assert!(err.contains("tried: py -3.12, python3.12"), "{err}");
+    }
+
+    const EMBEDDABLE: &str = r#"{
+        "schema": 1,
+        "interpreter": {"path": "python/python.exe", "gui_path": "python/pythonw.exe",
+                        "library": "python/python312.dll"},
+        "entry_points": {
+            "demo": {"args": ["-I", "-c", "code"]},
+            "demo-gui": {"args": ["-I", "-c", "gui"], "gui": true}
+        }
+    }"#;
+
+    #[test]
+    fn embedding_restores_sys_executable() {
+        let m = Manifest::parse(EMBEDDABLE).unwrap();
+        let root = Path::new("/opt/demo");
+        let mut e = env(None);
+        assert_eq!(
+            plan(&m, root, &root.join("demo"), vec![], &e)
+                .unwrap()
+                .embed,
+            None
+        );
+        e.embed = true;
+        let inv = plan(&m, root, &root.join("demo"), os(&["a"]), &e).unwrap();
+        assert_eq!(inv.embed, Some(root.join("python").join("python312.dll")));
+        let python = root.join("python").join("python.exe");
+        let xoption = format!("wheelship.executable={}", python.display());
+        let code = "import sys; sys.executable = sys._base_executable = \
+                    sys._xoptions.pop(\"wheelship.executable\"); code";
+        assert_eq!(
+            inv.args,
+            os(&[
+                "/opt/demo/demo",
+                "-X",
+                &xoption,
+                "-I",
+                "-c",
+                code,
+                "/opt/demo/demo",
+                "a"
+            ])
+        );
+        let gui = plan(&m, root, &root.join("demo-gui"), vec![], &e).unwrap();
+        assert!(gui.args[2].to_string_lossy().ends_with("pythonw.exe"));
+        // WHEELSHIP_BOOT=python keeps spawning the interpreter.
+        e.boot = Some("python".into());
+        assert_eq!(
+            plan(&m, root, &root.join("demo"), vec![], &e)
+                .unwrap()
+                .embed,
+            None
+        );
+    }
+
+    #[test]
+    fn embedding_needs_bundled_library() {
+        let m = Manifest::parse(MANIFEST).unwrap(); // no "library"
+        let root = Path::new("/opt/demo");
+        let mut e = env(None);
+        e.embed = true;
+        assert_eq!(
+            plan(&m, root, &root.join("demo"), vec![], &e)
+                .unwrap()
+                .embed,
+            None
+        );
+        assert!(embed_args(Path::new("p"), Path::new("e"), os(&["-I", "-c"])).is_err());
     }
 
     #[test]
