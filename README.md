@@ -25,8 +25,8 @@ uv run --group docs zensical serve   # docs site at http://localhost:8000
 
 ```sh
 cd your-project
-uv export --format pylock.toml --no-dev -o pylock.toml   # lock dependencies (PEP 751)
-wheelship build                                              # all configured targets -> dist/
+uv lock                      # uv projects: wheelship exports uv.lock to PEP 751 at build time
+wheelship build              # all configured targets -> dist/
 ```
 
 See the [documentation](https://bayashi-cl.github.io/wheelship/) for formats, configuration

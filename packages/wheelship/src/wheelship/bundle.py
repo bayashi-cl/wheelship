@@ -10,7 +10,7 @@ from pathlib import Path
 from . import bytecode, launchers, log, pbs, prune, sbom
 from .config import ProjectConfig, TargetConfig
 from .errors import BuildError, ConfigError, ResolveError
-from .lock import Artifact, pipreport, pylock
+from .lock import Artifact, pipreport, pylock, uv
 from .target import Target
 from .wheels import Wheel, obtain
 
@@ -90,22 +90,29 @@ def _builders() -> dict[str, FormatBuilder]:
 
 
 def find_lock(cfg: ProjectConfig, override: Path | None) -> Path | None:
+    """A ``pylock.toml``, or a ``uv.lock`` to export one from at build time."""
     if override is not None:
         return override
     if cfg.lock is not None:
         return cfg.lock
     default = cfg.root / "pylock.toml"
-    return default if default.is_file() else None
+    return default if default.is_file() else uv.find(cfg.root)
 
 
-def resolve(cfg: ProjectConfig, target: Target, lock: Path | None) -> list[Artifact]:
-    if lock is not None:
+def resolve(cfg: ProjectConfig, target: Target, lock: Path | None, work: Path) -> list[Artifact]:
+    if lock is not None and lock.name == uv.LOCK_NAME:
+        shown = lock.name if lock.parent == cfg.root else lock
+        log.info(f"resolving from {shown} (uv export) for {target}")
+        # extras and groups are already applied by uv (see lock.uv).
+        exported, base = uv.export(cfg, work / "uv-export")
+        artifacts = pylock.select(exported, target, base=base)
+    elif lock is not None:
         log.info(f"resolving from {lock.name} for {target}")
         artifacts = pylock.select(lock, target, extras=cfg.extras, groups=cfg.groups)
     else:
         log.warn(
             "no lock file; resolving with pip for this build only (not reproducible). "
-            "Create one with `uv export --format pylock.toml --no-dev -o pylock.toml`."
+            "Lock with uv (`uv lock`) or create a pylock.toml (`pip lock`)."
         )
         if cfg.dependencies is None:
             raise ResolveError("[project].dependencies is dynamic; a lock file is required")
@@ -151,9 +158,9 @@ def build_target(
         tc = dataclasses.replace(tc, target=exact)
         log.debug(f"python-build-standalone {asset.release}: CPython {tc.target.python_minor}")
 
-    artifacts = resolve(cfg, tc.target, find_lock(cfg, lock))
     with tempfile.TemporaryDirectory(prefix="wheelship-") as tmp:
         work = Path(tmp)
+        artifacts = resolve(cfg, tc.target, find_lock(cfg, lock), work)
         log.info(f"obtaining {len(artifacts)} distributions")
         wheels = obtain(artifacts, tc.target, work, find_links=cfg.find_links)
         ctx = BuildContext(
