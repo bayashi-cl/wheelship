@@ -121,7 +121,18 @@ def test_embedded_onefile(dist: Path, tmp_path: Path) -> None:
 
 def test_probe_pyvenv_cfg(bundle: Path, tmp_path: Path) -> None:
     """A pyvenv.cfg next to (or above) the executable: CPython's getpath reads it
-    for the *process* executable, which is the launcher when embedding."""
+    for the *process* executable, which is the launcher when embedding.
+
+    Known limitation recorded in docs/design.md §7.1: the expected exit codes
+    pin today's behaviour so that a change (e.g. PEP 741 embedding) is noticed.
+    """
+    expected = {
+        ("beside", False): 1,
+        ("beside", True): 1,
+        ("parent", False): 0,
+        ("parent", True): 1,
+    }
+    seen = {}
     rows = ["| pyvenv.cfg | mode | exit | prefix / error |", "|---|---|---|---|"]
     for where in ("beside", "parent"):
         copy = tmp_path / where / "app"
@@ -136,7 +147,9 @@ def test_probe_pyvenv_cfg(bundle: Path, tmp_path: Path) -> None:
                 detail = " ".join(proc.stderr.strip().splitlines()[-1:])[:120]
             mode = "embed" if embed else "spawn"
             rows.append(f"| {where} | {mode} | {proc.returncode} | `{detail}` |")
+            seen[where, embed] = proc.returncode
     summary("\n### Embedding probe: pyvenv.cfg\n\n" + "\n".join(rows) + "\n")
+    assert seen == expected
 
 
 def test_benchmark_startup(bundle: Path) -> None:

@@ -48,7 +48,8 @@ Examples: `tests/fixtures/apps/*/pyproject.toml`.
 
 Runtime environment variables: `WHEELSHIP_DEBUG=1` (show what is executed),
 `WHEELSHIP_BOOT=python` (run the interpreter directly), `WHEELSHIP_PYTHON`
-(interpreter for system bundles), `WHEELSHIP_CACHE_DIR` (where `exe`/`pyz` extract).
+(interpreter for system bundles), `WHEELSHIP_CACHE_DIR` (where `exe`/`pyz` extract),
+`WHEELSHIP_EMBED=1` (experimental, Windows bundled: run Python inside the launcher process).
 Build-time: `WHEELSHIP_CACHE_DIR`, `WHEELSHIP_PBS_MIRROR`, `WHEELSHIP_LAUNCHER_DIR`,
 `WHEELSHIP_BYTECODE_PYTHON`, `SOURCE_DATE_EPOCH`.
 

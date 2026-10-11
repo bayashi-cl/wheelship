@@ -250,12 +250,66 @@ wheelship 自身はリゾルバを持たない。解決は標準ツール（uv /
 - プロセスモデル:
   - Linux: `execv` で python に置き換わる。PID とシグナルの扱いが自然になる。
   - Windows: 子プロセスとして起動して、その終了コードを返す。Ctrl-C / Ctrl-Break は親では無視し、コンソールを共有する子に任せる。子は Job Object（`KILL_ON_JOB_CLOSE | SILENT_BREAKAWAY_OK`）に入れ、ランチャが強制終了されたら Python も終わるようにする。SILENT_BREAKAWAY_OK により、Python がさらに起動したプロセスは Job に入らないので、アプリが常駐プロセスを起動しても巻き込まれない。
-  - 将来の選択肢として、Windows で `python3XX.dll` をロードして `Py_Main` を呼ぶ、1 プロセス方式も検討する。
+  - Windows で `python3XX.dll` をロードして `Py_Main` を呼ぶ 1 プロセス方式は、§7.1 で検討した。現時点では実験的なオプトイン（`WHEELSHIP_EMBED=1`）にとどめる。
 - デバッグ用の環境変数（アプリの引数と衝突しないよう、引数ではなく環境変数で受け取る）:
   - `WHEELSHIP_DEBUG=1`: 探索・展開の様子をログ出力する。
   - `WHEELSHIP_BOOT=python`: entry point ではなく同梱 Python の REPL / 引数をそのまま実行する。
   - `WHEELSHIP_CACHE_DIR`: キャッシュディレクトリを上書きする。
+  - `WHEELSHIP_EMBED=1`: Windows の bundled で、Python をランチャのプロセス内で動かす（実験的、§7.1）。
 - Windows の長いパス対策: キャッシュパスを短く保ち、展開時は `\\?\` プレフィックスを使う。
+- Windows のランチャは C ランタイムを静的リンクする（`.cargo/config.toml` の `+crt-static`）。Visual C++ 再頒布可能パッケージが無い環境でも起動するようにするため。PBS は `vcruntime140.dll` を `python/` に同梱しているが、ランチャの DLL 検索パスには入らない。
+
+### 7.1 `Py_Main` 埋め込み方式の検討（Phase 4）
+
+**方式**: Windows の bundled で、ランチャが `python/python3XX.dll` を `LoadLibraryExW(LOAD_WITH_ALTERED_SEARCH_PATH)` でロードし、`Py_Main(argc, argv)` を呼ぶ。子プロセスは作らない。
+- `Py_Main` のシグネチャは Python 3.0 から変わっていない。ヘッダも、バージョンごとの構造体レイアウトも不要。
+- DLL の場所はマニフェストの `interpreter.library` に書く。PBS の Windows 版にだけ出力する。
+- `sys.prefix` は、CPython の getpath が DLL の隣の `Lib/os.py` から `python/` と判定する。`PYTHONHOME` などの設定は要らない。
+
+**`sys.executable` の扱い**: そのままだと `sys.executable` がランチャ（`app.exe`）になる。`multiprocessing`（spawn）や `subprocess.run([sys.executable, ...])` が、Python ではなくアプリ自身を起動してしまう。
+- 対策として、ランチャは `-X wheelship.executable=<python.exe>` を渡す。`-c` のコードの先頭には `sys.executable = sys._base_executable = sys._xoptions.pop(...)` を足す。
+- `pop` するので、`multiprocessing` が子に引き継ぐ `-X` オプション（`_args_from_interpreter_flags`）にも残らない。
+- GUI の entry point では `pythonw.exe` を設定する。
+
+**検証**（`tests/integration/test_embed.py`、Windows CI。2026-10-11 時点）:
+- **動作**: 次がすべて spawn 方式と同じ結果になった。
+  - `os.getpid()` がランチャの PID と一致する（1 プロセスで動いている）。
+  - `sys.executable`、`sys.prefix`、`sys.argv[0]`、`-I`、ネイティブ拡張、`multiprocessing`（spawn）、終了コード。
+  - GUI 版（`pythonw.exe` 相当で stdout なし）。
+  - 単一ファイル `exe`（キャッシュに展開して埋め込む）。
+- **起動時間**（GitHub の Windows ランナー、サンプルアプリ、15 回の中央値）:
+
+  | 方式 | 中央値 | 最小 |
+  |---|---|---|
+  | spawn | 108.0 ms | 106.1 ms |
+  | embed | 102.9 ms | 101.6 ms |
+
+- **pyvenv.cfg の誤検出**: getpath は、プロセスの実行ファイルと同じディレクトリか、その 1 つ上にある `pyvenv.cfg` を venv の印として読む。`-I` を付けても読む。
+
+  | `pyvenv.cfg` の場所 | spawn | embed |
+  |---|---|---|
+  | ランチャの隣（= `python.exe` の 1 つ上） | 失敗 | 失敗 |
+  | ランチャの 1 つ上 | 成功 | 失敗 |
+
+  - spawn 方式では、ランチャの隣に `pyvenv.cfg` を置かれたときだけ影響を受ける。バンドルの中に置かれることになるので、現実にはまず起きない。
+  - embed 方式では、判定の基準がランチャ（`app.exe`）の場所になる。特に単一ファイル `exe` は利用者が置き場所を決めるので、venv の `Scripts\` にコピーするなど、普通の使い方で壊れる。
+
+**評価**:
+- 利点:
+  - タスクマネージャ上のプロセス名と PID がアプリのものになる。
+  - Job Object と Ctrl-C の中継が要らない。
+  - プロセス単位の設定（ファイアウォール規則、タスクバーのグループ化、アイコン）がアプリの exe に付く。
+  - 起動時間は約 5 ms（5%）速い。
+- 欠点:
+  - `sys.executable` を後から書き換える回避策が要る。
+  - `pyvenv.cfg` の誤検出が起きる範囲が広がる。
+  - 拡張モジュールが読み込む DLL がランチャのプロセスに入る。
+
+**結論**:
+- 既定は spawn 方式のままとし、embed は実験的なオプトインとして残す。起動時間の差が小さく、`pyvenv.cfg` の問題は `Py_Main` では避けられないため。
+- Python 3.14 以降の PEP 741（`PyInitConfig_SetStr(config, "executable", ...)` と `Py_InitializeFromInitConfig`）なら、文字列キーで `executable` を直接設定できる。構造体レイアウトに依存しないので、上の 2 つの回避策がどちらも不要になる見込みがある。既定にするかどうかは、それを確かめてから再検討する。
+- Linux は `exec` ですでに 1 プロセスなので、埋め込みは行わない。
+- 未確認のこと: 実コンソールでの Ctrl-C / Ctrl-Break の挙動（CI では試せない）。
 
 ---
 
@@ -445,7 +499,7 @@ packages/wheelship/src/wheelship/
 | 1 ✅ | PBS 取得、bundled の `dir` / `archive`、Rust ランチャ（dir モード、Linux / Windows） | PyInstaller onedir の代わりになる |
 | 2 ✅ | `exe`（payload 連結、キャッシュ展開）、system モードの `dir` / `archive` / `exe` / `pyz` | 単一ファイル配布 |
 | 3 ✅ | `lambda-runtime`、bytecode 事前コンパイルの自動化、prune、SBOM、gui_scripts | Lambda の最適化と仕上げ |
-| 4 | Windows の Authenticode 署名手順、`Py_Main` 埋め込み方式の検討、macOS | 拡張 |
+| 4 | Windows の Authenticode 署名手順（#1）、`Py_Main` 埋め込み方式の検討（✅ §7.1、実験的）、macOS（#2） | 拡張 |
 
 ## 13. テスト方針
 
