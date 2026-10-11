@@ -79,7 +79,6 @@ Append to `pyproject.toml`:
 
 ```toml
 [tool.wheelship]
-lock = "pylock.toml"
 python = "3.13"            # must satisfy requires-python
 
 [[tool.wheelship.target]]
@@ -93,13 +92,26 @@ to `bundled` (python-build-standalone).
 
 ## Lock dependencies
 
-wheelship installs exactly what the lock file lists ([PEP 751](https://peps.python.org/pep-0751/)):
+wheelship installs exactly what the lock file lists. `uv add` has already written
+`uv.lock`; at build time wheelship exports it to a [PEP 751](https://peps.python.org/pep-0751/)
+lock with `uv export --format pylock.toml --locked --no-default-groups`, so there is
+nothing to generate or commit besides `uv.lock`. `--locked` makes the build fail if
+`uv.lock` is out of date with `pyproject.toml`; run `uv lock` after editing dependencies.
 
-```sh
-uv export --format pylock.toml --no-dev -o pylock.toml
-```
+In a uv workspace, run wheelship on the member (`wheelship build -C packages/app`):
+`uv.lock` is found at the workspace root and uv exports only that member and its
+dependencies, sibling members included.
 
-Re-run this whenever dependencies change. To see what the target resolves to
+??? note "Lock options"
+    - `[tool.wheelship] extras` and `groups` become `--extra` / `--group`.
+    - `[tool.wheelship] uv-export-args` appends arguments, e.g.
+      `["--no-emit-package", "foo"]`. `--frozen` there replaces `--locked`.
+    - Without uv, or to control the export completely, write the lock yourself
+      (`pip lock`, `uv export ... -o pylock.toml`) and set `[tool.wheelship] lock`
+      or pass `--lock`. A `pylock.toml` next to `pyproject.toml` takes precedence over
+      `uv.lock`.
+
+To see what the target resolves to
 (wheel tags and environment markers):
 
 ```console
@@ -115,7 +127,7 @@ linux: linux-x86_64-cp313-glibc2.17
 ```console
 $ wheelship build
 pinned python-build-standalone 20261009 in wheelship.lock
-resolving from pylock.toml for linux-x86_64-cp313-glibc2.17
+resolving from uv.lock (uv export) for linux-x86_64-cp313-glibc2.17
 obtaining 5 distributions
 building exe for target linux (linux-x86_64-cp313-glibc2.17)
   python-build-standalone: cpython-3.13.16+20261009-x86_64-unknown-linux-gnu-install_only_stripped.tar.gz
@@ -133,7 +145,7 @@ building archive for target linux (linux-x86_64-cp313-glibc2.17)
 | `hello-0.1.0-linux.cdx.json` | CycloneDX SBOM of everything inside |
 
 The first build also writes `wheelship.lock`, which pins the python-build-standalone
-release. Commit it together with `pylock.toml` for reproducible builds.
+release. Commit it together with `uv.lock` for reproducible builds.
 
 ## Run
 

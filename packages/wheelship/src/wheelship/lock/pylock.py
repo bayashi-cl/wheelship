@@ -49,9 +49,11 @@ def select(
     *,
     extras: Collection[str] = (),
     groups: Collection[str] | None = None,
+    base: Path | None = None,
 ) -> list[Artifact]:
+    """``base`` resolves relative paths in the lock (default: the lock's directory)."""
     lock = load(lock_path)
-    base = lock_path.parent.resolve()
+    base = (base or lock_path.parent).resolve()
     try:
         selected = list(
             lock.select(

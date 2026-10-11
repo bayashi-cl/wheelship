@@ -2,7 +2,7 @@
 
 Build relocatable Python application bundles for Linux, Windows and AWS Lambda.
 
-wheelship takes your project and its locked dependencies (`pylock.toml`, PEP 751),
+wheelship takes your project and its locked dependencies (`uv.lock`, or a PEP 751 `pylock.toml`),
 installs the wheels for each **target** platform — cross-building from any host — and
 packages the result together with an interpreter:
 

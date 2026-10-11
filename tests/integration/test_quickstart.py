@@ -56,7 +56,6 @@ def dist(tmp_path_factory: pytest.TempPathFactory) -> Path:
     (project / "src" / "hello" / "__init__.py").write_text(_block("python", "def main"))
     with (project / "pyproject.toml").open("a") as f:
         f.write("\n" + _block("toml", "[tool.wheelship]"))
-    _uv("export", "--format", "pylock.toml", "--no-dev", "-o", "pylock.toml", cwd=project)
 
     assert main(["build", "-q", "-C", str(project)]) == 0
     assert (project / "wheelship.lock").is_file()

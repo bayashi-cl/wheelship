@@ -40,7 +40,7 @@ PyInstaller と PEX の中間に位置づける。
 | プロジェクト定義 | PEP 621 `pyproject.toml` `[project]` | name / version / requires-python / dependencies / scripts を取得 |
 | ツール設定 | `[tool.wheelship]` | 独自設定はここだけに置く |
 | アプリの wheel 化 | PEP 517 / 518 | `build` パッケージ（または `pyproject_hooks`）で wheel を作る |
-| ロックファイル | **PEP 751 `pylock.toml`** | 入力の主形式。`uv export --format pylock.toml` / `pip lock` で生成 |
+| ロックファイル | **PEP 751 `pylock.toml`** | 入力の主形式。uv プロジェクトはビルド時に `uv.lock` から `uv export` で生成する。それ以外は `pip lock` などで作った `pylock.toml` を置く |
 | 解決レポート（代替） | pip installation report（JSON） | ロックが無い場合、`pip install --dry-run --report` をターゲット指定付きで実行して解決する |
 | 互換性判定 | wheel のタグ（PEP 425 / 600 manylinux / 656 musllinux）、PEP 508 マーカー | `packaging.tags` と `packaging.markers` を使い、**ターゲット環境**に対して評価する（ホストではない） |
 | インストール | Binary distribution format（PEP 427）、RECORD | `installer` ライブラリで sysconfig スキームへ展開する |
@@ -213,6 +213,18 @@ myapp/
 ### 6.1 解決
 
 1. **`pylock.toml`（推奨）**: `uv export --format pylock.toml` で生成した**ユニバーサル**ロックには、全プラットフォーム分の wheel がマーカー付きで入っている。1 つのロックから複数の Target をビルドできる。
+   - **uv プロジェクトでは `uv.lock` だけをコミットする。** `pylock.toml` は `uv.lock` から決定的に作れるので、両方をコミットしても再現性は増えず、再生成し忘れて食い違うリスクが増えるだけ。ロックの探索順は次の通り。
+     1. `--lock` / `[tool.wheelship].lock`
+     2. `pyproject.toml` と同じディレクトリの `pylock.toml`
+     3. プロジェクトのディレクトリから親へたどって最初に見つかる `uv.lock`（workspace のルート）
+     4. どれも無ければ代替（下記の 2.）
+   - `uv.lock` のときは、プロジェクトのディレクトリで `uv export --format pylock.toml --quiet --no-default-groups [--group G] [--extra E] --locked <uv-export-args>` を実行し、標準出力を作業ディレクトリに書いて読む。
+     - workspace のメンバーは、カレントディレクトリから uv が自動で選ぶ。`--package` は付けない。
+     - `--locked` を付けるので `uv.lock` は書き換えない。`pyproject.toml` とずれていればエラーにする。`uv-export-args` に `--frozen` があるときは `--locked` を付けない。
+   - uv はエクスポートに extras / groups をマーカーとしては書かず、選んだ結果だけを出力する。そのため `[tool.wheelship]` の `extras` / `groups` は uv の引数に変換する。`groups` を省略したときは `--no-default-groups` になり、dev などの default groups は入らない。
+   - エクスポート中のパスは workspace のルート（`uv.lock` のあるディレクトリ）からの相対パスになる。`-o` で出力先を変えても同じ。そのため、パスは `uv.lock` のディレクトリを基準に解決する。
+   - uv は workspace を自分で決めるので、別の `uv.lock` を明示するとパスの基準がずれる。アプリ自身の directory エントリが `pyproject.toml` のディレクトリを指していなければエラーにする。
+   - エクスポートの方法を完全に自分で決めたいとき（uv を使わない、独自のパイプラインがある）は、自分で `pylock.toml` を作って 1. で指定する。任意のシェルコマンドを設定で受け付けることはしない。出力先、パスの基準、extras/groups との整合を wheelship が保証できなくなるため。
 2. **代替**: ロックが無い場合、Target ごとに次を実行してレポートを入力にする。
    `pip install --dry-run --ignore-installed --report - --only-binary=:all: --platform <tags> --python-version <v> --implementation cp --abi <abi> -r ...`
    この場合、ロックは使わないので再現性は保証しないと明示する。
@@ -326,7 +338,8 @@ dependencies = ["httpx", "pydantic"]
 myapp = "myapp.cli:main"
 
 [tool.wheelship]
-lock = "pylock.toml"
+# lock = "pylock.toml"          # 省略時: ./pylock.toml → 親をたどって uv.lock（ビルド時に uv export）
+# uv-export-args = []           # uv.lock のときに uv export へ追加する引数
 python = "3.12"                  # requires-python の範囲内であることを検証する
 interpreter = "bundled"          # bundled | system
 python-flags = ["-I"]
@@ -463,7 +476,7 @@ dev = ["wheelship", "pytest", "ruff", "mypy"]
   2. できたバイナリを `packages/wheelship/src/wheelship/_launchers/<triple>/` に配置する（git には入れない）。
   3. ビルドバックエンド（hatchling）の `artifacts` で wheel に含める。
 - **開発中の参照先**: `WHEELSHIP_LAUNCHER_DIR` が指定されていればそこを使い、無ければリポジトリの `target/{debug,release}/` を探す。そのため、`cargo build` → `uv run wheelship build` の流れで、ランチャを配置し直さずに試せる。
-- **サンプルアプリ**: `tests/fixtures/apps/*` はそれぞれ独立したプロジェクト（自前の `pylock.toml` を持つ）なので、`exclude` で workspace から外す。
+- **サンプルアプリ**: `tests/fixtures/apps/*` はそれぞれ独立したプロジェクト（自前の `uv.lock` か `pylock.toml` を持つ。`uv_workspace` はそれ自体が uv workspace）なので、`exclude` で workspace から外す。
 
 ### 11.2 Python パッケージのモジュール構成
 
@@ -475,6 +488,7 @@ packages/wheelship/src/wheelship/
 ├── lock/
 │   ├── __init__.py   # Artifact（選択結果の共通表現）
 │   ├── pylock.py     # PEP 751: packaging.pylock.Pylock.select() に Target の環境とタグを渡す
+│   ├── uv.py         # uv.lock の探索と、ビルド時の uv export（PEP 751 への変換）
 │   └── pipreport.py  # pip installation report（代替経路）
 ├── wheels.py         # Artifact → ターゲット互換の wheel（取得 / find-links / PEP 517 ビルド）
 ├── fetch.py          # ダウンロード、ハッシュ検証、キャッシュ

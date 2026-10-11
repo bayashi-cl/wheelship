@@ -47,6 +47,8 @@ class ProjectConfig:
     python: str | None
     extras: tuple[str, ...]
     groups: tuple[str, ...] | None
+    uv_export_args: tuple[str, ...]
+    """Extra arguments for ``uv export`` when the lock is derived from ``uv.lock``."""
     compile_bytecode: bool
     sbom: bool
     python_flags: tuple[str, ...]
@@ -71,6 +73,7 @@ class ProjectConfig:
 _TOOL_KEYS = {
     "lock", "python", "interpreter", "extras", "groups", "compile-bytecode",
     "prune", "find-links", "target", "lambda", "python-flags", "pbs", "sbom",
+    "uv-export-args",
 }  # fmt: skip
 _TARGET_KEYS = {"name", "platform", "python", "glibc", "interpreter", "formats"}
 _LAMBDA_KEYS = {"handler", "layer-include-app"}
@@ -152,6 +155,7 @@ def parse(data: dict[str, Any], root: Path) -> ProjectConfig:
         python=python,
         extras=tuple(_strs(tool.get("extras", []), "tool.wheelship.extras")),
         groups=None if groups is None else tuple(_strs(groups, "tool.wheelship.groups")),
+        uv_export_args=tuple(_strs(tool.get("uv-export-args", []), "uv-export-args")),
         compile_bytecode=bool(tool.get("compile-bytecode", True)),
         sbom=bool(tool.get("sbom", True)),
         python_flags=tuple(_strs(tool.get("python-flags", ["-I"]), "tool.wheelship.python-flags")),

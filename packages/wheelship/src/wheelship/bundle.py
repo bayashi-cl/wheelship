@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import dataclasses
+import os
 import tempfile
 from collections.abc import Callable, Sequence
 from pathlib import Path
@@ -10,7 +11,7 @@ from pathlib import Path
 from . import bytecode, launchers, log, pbs, prune, sbom
 from .config import ProjectConfig, TargetConfig
 from .errors import BuildError, ConfigError, ResolveError
-from .lock import Artifact, pipreport, pylock
+from .lock import Artifact, pipreport, pylock, uv
 from .target import Target
 from .wheels import Wheel, obtain
 
@@ -90,22 +91,29 @@ def _builders() -> dict[str, FormatBuilder]:
 
 
 def find_lock(cfg: ProjectConfig, override: Path | None) -> Path | None:
+    """A ``pylock.toml``, or a ``uv.lock`` to export one from at build time."""
     if override is not None:
         return override
     if cfg.lock is not None:
         return cfg.lock
     default = cfg.root / "pylock.toml"
-    return default if default.is_file() else None
+    return default if default.is_file() else uv.find(cfg.root)
 
 
-def resolve(cfg: ProjectConfig, target: Target, lock: Path | None) -> list[Artifact]:
-    if lock is not None:
+def resolve(cfg: ProjectConfig, target: Target, lock: Path | None, work: Path) -> list[Artifact]:
+    if lock is not None and lock.name == uv.LOCK_NAME:
+        log.info(f"resolving from {os.path.relpath(lock, cfg.root)} (uv export) for {target}")
+        # extras and groups are already applied by uv (see lock.uv).
+        exported = uv.export(cfg, work / "uv-export")
+        artifacts = pylock.select(exported, target, base=lock.parent)
+        _check_uv_project(cfg, lock, artifacts)
+    elif lock is not None:
         log.info(f"resolving from {lock.name} for {target}")
         artifacts = pylock.select(lock, target, extras=cfg.extras, groups=cfg.groups)
     else:
         log.warn(
             "no lock file; resolving with pip for this build only (not reproducible). "
-            "Create one with `uv export --format pylock.toml --no-dev -o pylock.toml`."
+            "Lock with uv (`uv lock`) or create a pylock.toml (`pip lock`)."
         )
         if cfg.dependencies is None:
             raise ResolveError("[project].dependencies is dynamic; a lock file is required")
@@ -122,6 +130,17 @@ def resolve(cfg: ProjectConfig, target: Target, lock: Path | None) -> list[Artif
     for a in artifacts:
         log.debug(a.describe())
     return artifacts
+
+
+def _check_uv_project(cfg: ProjectConfig, lock: Path, artifacts: list[Artifact]) -> None:
+    # uv picks the workspace itself; a uv.lock found above an unrelated project
+    # (or set explicitly) would give paths relative to the wrong root.
+    for a in artifacts:
+        if a.name == cfg.name and a.kind == "directory" and a.path != cfg.root:
+            raise ResolveError(
+                f"{lock} does not belong to {cfg.root} (uv exported the project at {a.path}); "
+                "set [tool.wheelship].lock to the project's uv.lock or a pylock.toml"
+            )
 
 
 def build_target(
@@ -151,9 +170,9 @@ def build_target(
         tc = dataclasses.replace(tc, target=exact)
         log.debug(f"python-build-standalone {asset.release}: CPython {tc.target.python_minor}")
 
-    artifacts = resolve(cfg, tc.target, find_lock(cfg, lock))
     with tempfile.TemporaryDirectory(prefix="wheelship-") as tmp:
         work = Path(tmp)
+        artifacts = resolve(cfg, tc.target, find_lock(cfg, lock), work)
         log.info(f"obtaining {len(artifacts)} distributions")
         wheels = obtain(artifacts, tc.target, work, find_links=cfg.find_links)
         ctx = BuildContext(
