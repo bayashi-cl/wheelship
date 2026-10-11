@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import dataclasses
+import re
 import tomllib
 from pathlib import Path
 from typing import Any, Literal
@@ -25,6 +26,21 @@ class TargetConfig:
     target: Target
     interpreter: Interpreter
     formats: tuple[str, ...]
+
+
+@dataclasses.dataclass(frozen=True)
+class ScriptConfig:
+    """One ``[tool.wheelship.scripts]`` entry: a launcher in the bundle."""
+
+    name: str
+    script: str | None
+    """Name of a console/gui script declared by a distribution in the bundle."""
+    entry: str | None
+    """``module`` (run like ``python -m``) or ``module:attr`` (called)."""
+    args: tuple[str, ...] = ()
+    """Inserted before the user's arguments."""
+    gui: bool | None = None
+    """None: inherit from the referenced script (``entry``: console)."""
 
 
 @dataclasses.dataclass(frozen=True)
@@ -54,6 +70,9 @@ class ProjectConfig:
     python_flags: tuple[str, ...]
     prune: tuple[str, ...]
     find_links: tuple[Path, ...]
+    scripts: tuple[ScriptConfig, ...]
+    default_script: str | None
+    """Entry point of a renamed launcher; None when ``scripts`` is empty."""
     targets: tuple[TargetConfig, ...]
     lambda_: LambdaConfig
     pbs: PbsConfig
@@ -73,8 +92,9 @@ class ProjectConfig:
 _TOOL_KEYS = {
     "lock", "python", "interpreter", "extras", "groups", "compile-bytecode",
     "prune", "find-links", "target", "lambda", "python-flags", "pbs", "sbom",
-    "uv-export-args",
+    "uv-export-args", "scripts", "default-script",
 }  # fmt: skip
+_SCRIPT_KEYS = {"script", "entry", "args", "gui"}
 _TARGET_KEYS = {"name", "platform", "python", "glibc", "interpreter", "formats"}
 _LAMBDA_KEYS = {"handler", "layer-include-app"}
 _PBS_KEYS = {"release", "flavor", "strip"}
@@ -143,6 +163,9 @@ def parse(data: dict[str, Any], root: Path) -> ProjectConfig:
     if len(set(names)) != len(names):
         raise ConfigError(f"duplicate target names in [[tool.wheelship.target]]: {names}")
 
+    scripts = _parse_scripts(_table(tool, "scripts", "tool.wheelship", required=False))
+    default_script = _default_script(tool.get("default-script"), scripts)
+
     groups = tool.get("groups")
     return ProjectConfig(
         root=root,
@@ -161,10 +184,71 @@ def parse(data: dict[str, Any], root: Path) -> ProjectConfig:
         python_flags=tuple(_strs(tool.get("python-flags", ["-I"]), "tool.wheelship.python-flags")),
         prune=tuple(_strs(tool.get("prune", []), "tool.wheelship.prune")),
         find_links=tuple(root / p for p in _strs(tool.get("find-links", []), "find-links")),
+        scripts=scripts,
+        default_script=default_script,
         targets=targets,
         lambda_=lambda_cfg,
         pbs=_parse_pbs(_table(tool, "pbs", "tool.wheelship", required=False)),
     )
+
+
+_SCRIPT_NAME = re.compile(r"[A-Za-z0-9][A-Za-z0-9._-]*")
+
+
+def _parse_scripts(raw: dict[str, Any]) -> tuple[ScriptConfig, ...]:
+    scripts = []
+    for name, spec in raw.items():
+        where = f"[tool.wheelship.scripts] {name!r}"
+        if not _SCRIPT_NAME.fullmatch(name):
+            raise ConfigError(f"{where}: not a valid launcher name")
+        if not isinstance(spec, dict):
+            raise ConfigError(f'{where} must be a table, e.g. {{ script = "{name}" }}')
+        _check_keys(spec, _SCRIPT_KEYS, where)
+        if ("script" in spec) == ("entry" in spec):
+            raise ConfigError(f"{where}: set exactly one of 'script' or 'entry'")
+        entry = _str(spec["entry"], f"{where}.entry") if "entry" in spec else None
+        if entry is not None and not _valid_entry(entry):
+            raise ConfigError(f"{where}: entry must be 'module' or 'module:attr', not {entry!r}")
+        gui = spec.get("gui")
+        if gui is not None and not isinstance(gui, bool):
+            raise ConfigError(f"{where}.gui must be true or false")
+        scripts.append(
+            ScriptConfig(
+                name=name,
+                script=_str(spec["script"], f"{where}.script") if "script" in spec else None,
+                entry=entry,
+                args=tuple(_strs(spec.get("args", []), f"{where}.args")),
+                gui=gui,
+            )
+        )
+    return tuple(scripts)
+
+
+def _valid_entry(entry: str) -> bool:
+    """``module`` or ``module:attr`` with dotted identifiers."""
+    module, sep, attr = entry.partition(":")
+    return all(
+        part.isidentifier()
+        for dotted in (module, attr)[: 2 if sep else 1]
+        for part in dotted.split(".")
+    )
+
+
+def _default_script(raw: Any, scripts: tuple[ScriptConfig, ...]) -> str | None:
+    names = [s.name for s in scripts]
+    if raw is None:
+        if len(names) > 1:
+            raise ConfigError(
+                "[tool.wheelship].default-script is required with several scripts "
+                f"(one of: {', '.join(names)})"
+            )
+        return names[0] if names else None
+    default = _str(raw, "tool.wheelship.default-script")
+    if default not in names:
+        raise ConfigError(
+            f"[tool.wheelship].default-script {default!r} is not in [tool.wheelship.scripts]"
+        )
+    return default
 
 
 def _parse_pbs(raw: dict[str, Any]) -> PbsConfig:

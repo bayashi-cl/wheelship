@@ -10,7 +10,8 @@ it can report a version mismatch instead of failing with a syntax error.
 * zipapp only: extracts ``lib/`` once into the cache (native extensions
   cannot be imported from a zip), like a single-file executable does;
 * adds ``lib/`` with :func:`site.addsitedir` (``.pth`` files are honored);
-* calls the selected entry point with ``sys.argv[0]`` set to the program path.
+* calls the selected entry point with ``sys.argv[0]`` set to the program path
+  and the configured ``app_args`` before the user's arguments.
 
 Directory mode is invoked by the launcher as
 ``python -I _wheelship_boot.py <entry point> <launcher path> <args...>``.
@@ -131,9 +132,15 @@ def _select(manifest, program):
 
 
 def _call(value):
+    """Call ``module:attr``, or run ``module`` as ``__main__`` like ``python -m``."""
     import importlib
 
-    module, _, attr = value.partition(":")
+    module, sep, attr = value.partition(":")
+    if not sep:
+        import runpy
+
+        runpy.run_module(module, run_name="__main__", alter_sys=True)
+        return None
     obj = importlib.import_module(module)
     for part in attr.split("."):
         obj = getattr(obj, part)
@@ -165,8 +172,9 @@ def main():
     import site
 
     site.addsitedir(os.path.join(root, "lib"))
-    sys.argv = argv
-    sys.exit(_call(manifest["entry_points"][name]["value"]))
+    entry = manifest["entry_points"][name]
+    sys.argv = argv[:1] + entry.get("app_args", []) + argv[1:]
+    sys.exit(_call(entry["value"]))
 
 
 if __name__ == "__main__":

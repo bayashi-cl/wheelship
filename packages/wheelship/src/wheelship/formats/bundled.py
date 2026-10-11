@@ -12,7 +12,7 @@ from pathlib import Path
 from .. import __version__, log, manifest, pbs
 from ..bundle import BuildContext
 from ..install import Scheme, install_wheels
-from .package import app_entry_points, finalize, install_launchers, write_manifest
+from .package import bundle_entry_points, finalize, install_launchers, write_manifest
 
 
 def install_into_pbs(
@@ -57,7 +57,7 @@ def compile_pbs(ctx: BuildContext, root: Path, python_dir: Path, layout: pbs.Lay
 
 def bundled_tree(ctx: BuildContext) -> Path:
     target, cfg = ctx.target, ctx.cfg
-    eps = app_entry_points(ctx)
+    eps = bundle_entry_points(ctx)
     root = ctx.stage("bundled")
     python_dir, layout = install_into_pbs(ctx, root)
 
@@ -74,6 +74,7 @@ def bundled_tree(ctx: BuildContext) -> Path:
             library=f"python/{layout.library}" if layout.library else None,
             python_flags=cfg.python_flags,
             entry_points=eps,
+            default_entry_point=cfg.default_script,
             wheelship_version=__version__,
         ),
     )

@@ -44,7 +44,7 @@ PyInstaller と PEX の中間に位置づける。
 | 解決レポート（代替） | pip installation report（JSON） | ロックが無い場合、`pip install --dry-run --report` をターゲット指定付きで実行して解決する |
 | 互換性判定 | wheel のタグ（PEP 425 / 600 manylinux / 656 musllinux）、PEP 508 マーカー | `packaging.tags` と `packaging.markers` を使い、**ターゲット環境**に対して評価する（ホストではない） |
 | インストール | Binary distribution format（PEP 427）、RECORD | `installer` ライブラリで sysconfig スキームへ展開する |
-| エントリーポイント | Entry points 仕様（`console_scripts` / `gui_scripts`） | ランチャの生成元にする |
+| エントリーポイント | Entry points 仕様（`console_scripts` / `gui_scripts`） | `[tool.wheelship.scripts]` の `script` で参照する名前を引く（§8.1） |
 | バイトコード | PEP 552（hash ベースの pyc） | `unchecked-hash` でコンパイルして再現性を確保。読み取り専用の FS（Lambda）での起動も速くなる |
 | zipapp | PEP 441 | インタプリタ非同梱の単一ファイル形式 |
 | SBOM（任意） | PEP 770（`.dist-info/sboms`）、CycloneDX | ロック内容から生成する |
@@ -86,7 +86,7 @@ PBS release ────► [fetch + verify] ───────────�
 
 ```
 myapp/
-├── myapp(.exe)          # ランチャ（console_scripts ごとに 1 つ。gui_scripts は Windows GUI サブシステム版）
+├── myapp(.exe)          # ランチャ（[tool.wheelship.scripts] ごとに 1 つ。GUI のものは Windows GUI サブシステム版）
 ├── wheelship.json           # マニフェスト
 └── python/              # PBS の install_only(_stripped) ツリー
     ├── bin/python3.12   # Linux（dir / tar.gz では PBS の相対 symlink を保持。zip 系では実体化）
@@ -113,8 +113,8 @@ myapp/
 - `_wheelship_boot.py` の処理（標準ライブラリのみ。古い Python でもバージョン不一致を報告できるよう、新しい構文は使わない）:
   1. ABI の確認: `sys.implementation.name`、メジャー・マイナーバージョン、`sysconfig.get_config_var("EXT_SUFFIX")`（アーキテクチャや glibc / musl の違いも表れる）をマニフェストと照合する。合わなければ、何が必要かと `WHEELSHIP_PYTHON` の指定方法を表示して終了コード 1 で終わる。
   2. `site.addsitedir(lib)` を呼ぶ。`.pth` も処理されるので、名前空間パッケージや `.pth` に依存するパッケージも動く。
-  3. エントリーポイント（`module:attr`）を import して呼ぶ。`sys.argv[0]` はランチャのパスにする。
-- 依存パッケージの console script（例: `pygmentize`）は生成しない。インタプリタを同梱しないので、指す先を確実に決められないため。
+  3. マニフェストの `app_args` をユーザー引数の前に入れ、エントリーポイントを実行する。`module:attr` は import して呼び、`sys.argv[0]` はランチャのパスにする。`module` だけなら `runpy.run_module(..., alter_sys=True)` で `python -m` と同じように動かす。
+- installer が生成する依存パッケージの console script（例: `pygmentize`）は捨てる。インタプリタを同梱しないので、指す先を確実に決められないため。依存パッケージのスクリプトを起動したい場合は、`[tool.wheelship.scripts]` に書いてランチャを作る。
 
 ### 4.3 `exe`（単一ファイル）
 
@@ -245,8 +245,8 @@ wheelship 自身はリゾルバを持たない。解決は標準ツール（uv /
   - system: `purelib = platlib = lib/`、`scripts = bin/`、`data = .`。
 - `RECORD`、`INSTALLER`（=`wheelship <version>`）を書く。`direct_url.json`（PEP 610）は、ビルドしたホストの絶対パスが入って再現性を損なうため書かない。
 - **console script は installer の生成物を使わない。** 絶対パスの shebang が入って再配置できないため、次のように置き換える。
-  - アプリ自身の `console_scripts` / `gui_scripts`: バンドル直下に wheelship ランチャを置く。
-  - 依存パッケージのスクリプト（例: `pygmentize`）: `python/bin` / `python/Scripts` に、相対パスでインタプリタを探すスクリプトを書く。Linux は `/bin/sh` と Python の polyglot（`'''exec' "$(dirname -- "$(realpath -- "$0")")/python3.X" -I "$0" "$@"`）、Windows は `%~dp0..\python.exe` を呼ぶ `.cmd`。
+  - `[tool.wheelship.scripts]` に書いたもの: バンドル直下に wheelship ランチャを置く（§8.1）。
+  - それ以外のスクリプト（例: `pygmentize`）: `python/bin` / `python/Scripts` に、相対パスでインタプリタを探すスクリプトを書く。Linux は `/bin/sh` と Python の polyglot（`'''exec' "$(dirname -- "$(realpath -- "$0")")/python3.X" -I "$0" "$@"`）、Windows は `%~dp0..\python.exe` を呼ぶ `.cmd`。
 - アプリ本体も wheel 化してから同じ経路でインストールする（「そのままインストールする」原則）。
 
 ---
@@ -256,7 +256,7 @@ wheelship 自身はリゾルバを持たない。解決は標準ツール（uv /
 - **Rust 製**の小さなバイナリ。std と最小限の crate（zip 展開など）だけを使い、数百 KB を目標にする。
 - 事前ビルドしたもの（linux-gnu x86_64/aarch64、windows x86_64/aarch64、console/gui）を**wheelship の wheel に同梱する**。distlib が `t64.exe` などを同梱しているのと同じ方式。こうすると wheelship 本体は pure Python のままで、どのホストからでもクロスビルドできる。
 - 設定は実行ファイルに直接埋め込まない。隣の `wheelship.json`（exe 形式では payload 内）を読む。ランチャ名（実行ファイルの stem）で entry point を選ぶ、busybox 方式。名前が一致しない（リネームされた）場合は `default_entry_point` を使う。
-- 実行するコマンドは `<interpreter> <python-flags> -c "import sys; sys.argv.pop(0); from mod import f; sys.exit(f())" <ランチャのパス> <ユーザー引数>`。`-c` のプレースホルダを取り除くので、`sys.argv[0]` はランチャのパスになり、argparse の `prog` も通常の console script と同じになる。コードは wheelship が生成してマニフェストに書くので、ランチャは中身を解釈しない。
+- 実行するコマンドは `<interpreter> <python-flags> -c "import sys; sys.argv.pop(0); from mod import f; sys.exit(f())" <ランチャのパス> <ユーザー引数>`。`-c` のプレースホルダを取り除くので、`sys.argv[0]` はランチャのパスになり、argparse の `prog` も通常の console script と同じになる。`args` を設定したエントリーポイントでは `sys.argv[1:1] = [...]` を、`entry = "module"` では関数呼び出しの代わりに `runpy.run_module(...)` を生成する（`-m` は使わない。ランチャが付け足すランチャのパスを取り除けないため）。コードは wheelship が生成してマニフェストに書くので、ランチャは中身を解釈しない。
 - ランチャ自体へのシンボリックリンク（`~/.local/bin` に置くなど）は、実体の場所まで解決してからバンドルを探す。
 - 起動に失敗した場合は `wheelship-launcher: ...` を stderr に出して終了コード 1 で終わる。Windows の GUI 版では、コンソールが無いのでメッセージボックスで表示する。
 - プロセスモデル:
@@ -341,10 +341,15 @@ myapp = "myapp.cli:main"
 # lock = "pylock.toml"          # 省略時: ./pylock.toml → 親をたどって uv.lock（ビルド時に uv export）
 # uv-export-args = []           # uv.lock のときに uv export へ追加する引数
 python = "3.12"                  # requires-python の範囲内であることを検証する
+default-script = "myapp"         # scripts が 2 つ以上なら必須
 interpreter = "bundled"          # bundled | system
 python-flags = ["-I"]
 compile-bytecode = true
 prune = ["**/tests/**", "**/*.pyi"]
+
+[tool.wheelship.scripts]          # ランチャになるのはここに書いたものだけ（§8.1）
+myapp = { script = "myapp" }
+myapp-server = { script = "uvicorn", args = ["myapp.api:app", "--host", "0.0.0.0"] }
 
 [tool.wheelship.pbs]
 release = "20251014"
@@ -372,6 +377,32 @@ formats = ["lambda-zip", "lambda-layer"]
 handler = "myapp.aws:handler"
 ```
 
+### 8.1 エントリーポイント（`[tool.wheelship.scripts]`）
+
+ランチャになるのは `[tool.wheelship.scripts]` に書いたものだけで、`[project.scripts]` から自動では作らない。何がバンドルの入口になるかを設定から読み取れるようにするため。キー名がランチャのファイル名になる。
+
+```toml
+[tool.wheelship]
+default-script = "myapp-server"
+
+[tool.wheelship.scripts]
+myapp         = { script = "myapp" }                    # アプリ自身の [project.scripts]
+myapp-server  = { script = "uvicorn", args = ["myapp.api:app", "--host", "0.0.0.0"] }
+myapp-migrate = { entry = "alembic.config:main", args = ["upgrade", "head"] }
+myapp-shell   = { entry = "IPython" }                   # python -m IPython と同じ
+```
+
+| キー | 意味 |
+|---|---|
+| `script` | バンドルに入る配布物（アプリ自身と依存）の `console_scripts` / `gui_scripts` の名前。ビルド時に `module:attr` に変換する。見つからない、または複数の配布物が同じ名前を持つ場合はエラー |
+| `entry` | `module:attr` なら import して呼ぶ。`module` だけなら `__main__` として実行する（`python -m` と同じで、`sys.argv[0]` はモジュールのファイルになる） |
+| `args` | 固定の引数。ユーザー引数の前に入るので、後から指定したオプションで上書きできる |
+| `gui` | Windows の GUI サブシステムで起動するか。`script` では参照先が `gui_scripts` かどうかを引き継ぎ、`entry` では既定 `false` |
+
+- `script` と `entry` はどちらか一方だけを指定する。PEX の `-c` と `-e` に相当する。
+- `default-script` は、リネームされたランチャ（単一ファイルの `exe` や `pyz` を含む）の名前がどのエントリーポイントにも一致しないときに使う。`scripts` が 1 つならそれが既定になり、2 つ以上なら必須。
+- `scripts` が空のままバンドル系の形式（`dir` / `archive` / `exe` / `pyz`）をビルドすると、アプリの `[project.scripts]` から作った設定例を付けてエラーにする。Lambda の形式はエントリーポイントを使わないので、無くてよい。
+
 ## 9. CLI
 
 ```
@@ -395,7 +426,9 @@ wheelship cache clean
                   "cache_tag": "cpython-312", "ext_suffix": ".cpython-312-x86_64-linux-gnu.so"},
   "python_flags": ["-I"],
   "site_dirs": [],
-  "entry_points": {"myapp": {"value": "myapp.cli:main", "gui": false}},
+  "entry_points": {"myapp": {"value": "myapp.cli:main", "args": ["-I", "-c", "..."],
+                            "app_args": [], "gui": false}},
+  "default_entry_point": "myapp",
   "target": {"platform": "linux-x86_64", "tags": ["cp312-cp312-manylinux_2_28_x86_64", "..."]},
   "payload_sha256": "...",
   "build": {"tool": "wheelship 0.1.0", "source_date_epoch": 1760000000}

@@ -6,13 +6,17 @@ import os
 import subprocess
 import sys
 import tarfile
+import tomllib
 from pathlib import Path
+from types import SimpleNamespace
+from typing import Any
 
 import pytest
 
 from tests.conftest import MakeWheel
-from wheelship import launchers, manifest, pbs, reproducible
+from wheelship import config, launchers, manifest, pbs, reproducible
 from wheelship.errors import BuildError, ConfigError
+from wheelship.formats.package import bundle_entry_points
 from wheelship.install import flat_scheme, install_wheels
 from wheelship.lock import Artifact
 from wheelship.target import make_target
@@ -174,14 +178,25 @@ def test_entry_code() -> None:
         "import sys; sys.argv.pop(0); from a.b import c; sys.exit(c.d())"
     )
     assert "pop" not in manifest.entry_code("a", "b", pop_argv0=False)
+    assert manifest.entry_code("a", "b", pop_argv0=True, args=["x", "y'z"]) == (
+        "import sys; sys.argv.pop(0); sys.argv[1:1] = ['x', \"y'z\"]; "
+        "from a import b; sys.exit(b())"
+    )
+    assert manifest.entry_code("a.b", None, pop_argv0=True) == (
+        "import sys; sys.argv.pop(0); import runpy; "
+        "runpy.run_module('a.b', run_name='__main__', alter_sys=True)"
+    )
     with pytest.raises(ValueError):
         manifest.entry_code("a; import os", "b", pop_argv0=False)
+    with pytest.raises(ValueError):
+        manifest.entry_code("a; import os", None, pop_argv0=False)
 
 
 def test_manifest_document() -> None:
     eps = [
-        manifest.EntryPoint("tool-gui", "tool.app", "gui", "gui"),
-        manifest.EntryPoint("tool-cli", "tool.app", "main", "console"),
+        manifest.EntryPoint("tool-gui", "tool.app", "gui", gui=True),
+        manifest.EntryPoint("tool-cli", "tool.app", "main", args=("--x",)),
+        manifest.EntryPoint("tool-mod", "tool", None),
     ]
     doc = manifest.build(
         app_name="tool",
@@ -192,10 +207,14 @@ def test_manifest_document() -> None:
         gui_interpreter="python/pythonw.exe",
         python_flags=["-I"],
         entry_points=eps,
+        default_entry_point="tool-cli",
         wheelship_version="0",
     )
     assert doc["schema"] == 1
-    assert doc["default_entry_point"] == "tool-cli"  # no script named like the app: first console
+    assert doc["default_entry_point"] == "tool-cli"
+    assert doc["entry_points"]["tool-cli"]["app_args"] == ["--x"]
+    assert doc["entry_points"]["tool-mod"]["value"] == "tool"
+    assert doc["entry_points"]["tool-gui"]["value"] == "tool.app:gui"
     assert doc["entry_points"]["tool-gui"]["gui"] is True
     assert doc["entry_points"]["tool-cli"]["args"][:2] == ["-I", "-c"]
     assert doc["interpreter"]["version"] == "3.12.15"
@@ -211,11 +230,53 @@ def _tool_wheel(make_wheel: MakeWheel) -> Path:
 
 def test_entry_points_from_wheel(make_wheel: MakeWheel) -> None:
     eps = entry_points(_tool_wheel(make_wheel))
-    assert [(e.name, e.module, e.attr, e.section) for e in eps] == [
-        ("tool", "tool", "main", "console"),
-        ("tool-gui", "tool", "main", "gui"),
+    assert [(e.name, e.module, e.attr, e.gui) for e in eps] == [
+        ("tool", "tool", "main", False),
+        ("tool-gui", "tool", "main", True),
     ]
     assert entry_points(make_wheel("plain")) == []
+
+
+def _scripts_ctx(make_wheel: MakeWheel, scripts: str) -> Any:
+    """Just enough of a BuildContext for ``bundle_entry_points``."""
+    tool = Wheel(Artifact("tool", "1.0", "wheel"), _tool_wheel(make_wheel))  # type: ignore[arg-type]
+    dep = make_wheel("dep", entry_points="[console_scripts]\ndep-cli = dep.cli:run\n")
+    wheels = [tool, Wheel(Artifact("dep", "1.0", "wheel"), dep)]  # type: ignore[arg-type]
+    data = tomllib.loads(f'[project]\nname = "tool"\n[tool.wheelship.scripts]\n{scripts}\n')
+    if "\n" in scripts.strip():
+        data["tool"]["wheelship"]["default-script"] = scripts.split(" ", 1)[0]
+    if not scripts:
+        del data["tool"]
+    return SimpleNamespace(
+        cfg=config.parse(data, Path()), wheels=wheels, app=tool, entry_points=None
+    )
+
+
+def test_bundle_entry_points(make_wheel: MakeWheel) -> None:
+    ctx = _scripts_ctx(
+        make_wheel,
+        'a = { script = "dep-cli", args = ["x"] }\n'
+        'b = { script = "tool-gui" }\n'
+        'c = { script = "tool-gui", gui = false }\n'
+        'd = { entry = "tool.sub" }\n'
+        'e = { entry = "tool:main", gui = true }',
+    )
+    eps = bundle_entry_points(ctx)
+    assert [(e.name, e.value, e.gui, e.args) for e in eps] == [
+        ("a", "dep.cli:run", False, ("x",)),
+        ("b", "tool:main", True, ()),
+        ("c", "tool:main", False, ()),
+        ("d", "tool.sub", False, ()),
+        ("e", "tool:main", True, ()),
+    ]
+    assert bundle_entry_points(ctx) is eps  # resolved once per target
+
+
+def test_bundle_entry_points_errors(make_wheel: MakeWheel) -> None:
+    with pytest.raises(ConfigError, match=r'(?s)is empty.*tool = \{ script = "tool" \}'):
+        bundle_entry_points(_scripts_ctx(make_wheel, ""))
+    with pytest.raises(ConfigError, match=r"named 'nope' \(available: dep-cli, tool, tool-gui\)"):
+        bundle_entry_points(_scripts_ctx(make_wheel, 'a = { script = "nope" }'))
 
 
 @pytest.mark.skipif(sys.platform == "win32", reason="runs a POSIX sh script")

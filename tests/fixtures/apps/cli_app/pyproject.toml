@@ -20,6 +20,15 @@ build-backend = "hatchling.build"
 
 [tool.wheelship]
 python = "3.12"
+default-script = "cli-app"
+
+[tool.wheelship.scripts]
+cli-app = { script = "cli-app" }
+cli-app-gui = { script = "cli-app-gui" }
+# Like `python -m cli_app --exit 5 fixed`: run as __main__ with fixed arguments.
+cli-app-fixed = { entry = "cli_app", args = ["--exit", "5", "fixed"] }
+# A dependency's console script.
+pyg = { script = "pygmentize", args = ["-V"] }
 
 [[tool.wheelship.target]]
 name = "linux"

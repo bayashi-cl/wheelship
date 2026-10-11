@@ -12,8 +12,9 @@ Tree::
 ``__main__.py``; it extracts ``lib/`` into the cache on first run because
 native extensions cannot be imported from a zip.
 
-Console scripts of dependencies are not generated: without a bundled
-interpreter there is nothing they could reliably point at.
+The installer's console scripts are discarded: without a bundled interpreter
+there is nothing they could reliably point at. A dependency's script gets a
+launcher only when listed in ``[tool.wheelship.scripts]``.
 """
 
 from __future__ import annotations
@@ -28,7 +29,7 @@ from ..bundle import BuildContext
 from ..errors import ConfigError
 from ..install import Scheme, install_wheels
 from ..reproducible import tree_digest, write_zip
-from .package import app_entry_points, finalize, install_launchers, tree, write_manifest
+from .package import bundle_entry_points, finalize, install_launchers, tree, write_manifest
 
 
 def boot_script() -> bytes:
@@ -37,7 +38,7 @@ def boot_script() -> bytes:
 
 def system_tree(ctx: BuildContext) -> Path:
     target, cfg = ctx.target, ctx.cfg
-    eps = app_entry_points(ctx)
+    eps = bundle_entry_points(ctx)
 
     root = ctx.stage("system")
     lib = root / "lib"
@@ -62,6 +63,7 @@ def system_tree(ctx: BuildContext) -> Path:
             mode="system",
             python_flags=cfg.python_flags,
             entry_points=eps,
+            default_entry_point=cfg.default_script,
             wheelship_version=__version__,
         ),
     )

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import os
+import shutil
 import subprocess
 import sys
 import sysconfig
@@ -57,7 +58,8 @@ def _system_doc(platform: str) -> dict[str, Any]:
         target=make_target(platform, "3.12"),
         mode="system",
         python_flags=["-I"],
-        entry_points=[manifest.EntryPoint("tool", "tool", "main", "console")],
+        entry_points=[manifest.EntryPoint("tool", "tool", "main")],
+        default_entry_point="tool",
         wheelship_version="0",
     )
 
@@ -117,6 +119,7 @@ def _bundle(root: Path, *, python: str | None = None, payload: bool = False) -> 
         "    print(json.dumps({'argv': sys.argv, 'path': sys.path}))\n"
         "    return 3\n"
     )
+    (lib / "tool" / "__main__.py").write_text("import sys, tool\nsys.exit(tool.main() + 1)\n")
     # A .pth file must be honored (site.addsitedir).
     (lib / "extra.pth").write_text("extra_dir\n")
     (lib / "extra_dir").mkdir()
@@ -128,7 +131,11 @@ def _bundle(root: Path, *, python: str | None = None, payload: bool = False) -> 
             "python": python or "{}.{}".format(*sys.version_info[:2]),
             "ext_suffix": sysconfig.get_config_var("EXT_SUFFIX"),
         },
-        "entry_points": {"tool": {"args": [], "value": "tool:main"}},
+        "entry_points": {
+            "tool": {"args": [], "value": "tool:main"},
+            "tool-fixed": {"args": [], "app_args": ["-v", "x y"], "value": "tool:main"},
+            "tool-mod": {"args": [], "app_args": ["-m"], "value": "tool"},
+        },
         "default_entry_point": "tool",
     }
     if payload:
@@ -154,6 +161,21 @@ def test_boot_dir_mode(tmp_path: Path) -> None:
     assert str(tmp_path / "lib") in out["path"]
     assert str(tmp_path / "lib" / "extra_dir") in out["path"]
     assert not any(p.endswith("site-packages") for p in out["path"])
+
+
+def test_boot_app_args_and_module(tmp_path: Path) -> None:
+    _bundle(tmp_path)
+    boot = tmp_path / "_wheelship_boot.py"
+    boot.write_bytes(boot_script())
+    proc = _run(sys.executable, "-I", "-S", boot, "tool-fixed", "/opt/tool/tool-fixed", "a")
+    assert proc.returncode == 3, proc.stderr
+    assert json.loads(proc.stdout)["argv"] == ["/opt/tool/tool-fixed", "-v", "x y", "a"]
+
+    # Like python -m: run as __main__, sys.argv[0] is the module's file.
+    proc = _run(sys.executable, "-I", "-S", boot, "tool-mod", "/opt/tool/tool-mod", "a")
+    assert proc.returncode == 4, proc.stderr
+    argv = json.loads(proc.stdout)["argv"]
+    assert argv == [str(tmp_path / "lib" / "tool" / "__main__.py"), "-m", "a"]
 
 
 def test_boot_rejects_other_python(tmp_path: Path) -> None:
@@ -187,6 +209,13 @@ def test_boot_zipapp_extracts_once(tmp_path: Path) -> None:
     assert _run(sys.executable, pyz, env=env).returncode == 3
     assert marker.stat().st_mtime_ns == before  # reused, not re-extracted
     assert [p.name for p in (cache / "apps" / "tool").iterdir()] == [extracted.name]
+
+    # The archive's name selects the entry point, with its app_args.
+    renamed = tmp_path / "tool-fixed.pyz"
+    shutil.copy2(pyz, renamed)
+    proc = _run(sys.executable, renamed, "a", env=env)
+    assert proc.returncode == 3, proc.stderr
+    assert json.loads(proc.stdout)["argv"] == [str(renamed), "-v", "x y", "a"]
 
 
 def test_boot_requires_launcher_arguments(tmp_path: Path) -> None:

@@ -4,7 +4,7 @@ A target's *tree* is assembled once (``bundled.bundled_tree`` or
 ``system.system_tree``) and then packaged::
 
     <bundle>/
-    ├── <script>(.exe)       launcher per console/gui script of the application
+    ├── <script>(.exe)       launcher per [tool.wheelship.scripts] entry
     ├── wheelship.json       manifest read by the launcher
     ├── python/              bundled: python-build-standalone, app installed into it
     └── lib/ + _wheelship_boot.py   system: site directory + bootstrap
@@ -49,12 +49,52 @@ def tree(ctx: BuildContext) -> Path:
 # -- helpers used by the tree builders -----------------------------------------
 
 
-def app_entry_points(ctx: BuildContext) -> list[EntryPoint]:
-    eps = entry_points(ctx.app.path)
-    if not eps:
+def bundle_entry_points(ctx: BuildContext) -> list[EntryPoint]:
+    """``[tool.wheelship.scripts]`` with ``script`` references resolved."""
+    if ctx.entry_points is None:
+        ctx.entry_points = _resolve_scripts(ctx)
+    return ctx.entry_points
+
+
+def _resolve_scripts(ctx: BuildContext) -> list[EntryPoint]:
+    cfg = ctx.cfg
+    if not cfg.scripts:
+        own = [ep.name for ep in entry_points(ctx.app.path)]
+        example = (
+            f'{own[0]} = {{ script = "{own[0]}" }}' if own else 'app = { entry = "pkg.cli:main" }'
+        )
         raise ConfigError(
-            f"{ctx.cfg.name} defines no [project.scripts] or [project.gui-scripts]; "
-            "a bundle needs at least one entry point to launch"
+            "[tool.wheelship.scripts] is empty; a bundle needs at least one entry point "
+            f"to launch, for example:\n  [tool.wheelship.scripts]\n  {example}"
+        )
+    declared: dict[str, list[tuple[str, EntryPoint]]] = {}
+    if any(s.script is not None for s in cfg.scripts):
+        for w in ctx.wheels:
+            for ep in entry_points(w.path):
+                declared.setdefault(ep.name, []).append((w.artifact.name, ep))
+
+    eps = []
+    for s in cfg.scripts:
+        where = f"[tool.wheelship.scripts] {s.name!r}"
+        if s.script is not None:
+            found = declared.get(s.script, [])
+            if not found:
+                known = ", ".join(sorted(declared)) or "(none)"
+                raise ConfigError(
+                    f"{where}: no distribution in the bundle declares a script named "
+                    f"{s.script!r} (available: {known})"
+                )
+            if len(found) > 1:
+                dists = ", ".join(dist for dist, _ in found)
+                raise ConfigError(f"{where}: script {s.script!r} is declared by {dists}")
+            ref = found[0][1]
+            module, attr, gui = ref.module, ref.attr, ref.gui
+        else:
+            assert s.entry is not None
+            module, sep, attr_ = s.entry.partition(":")
+            attr, gui = (attr_ if sep else None), False
+        eps.append(
+            EntryPoint(s.name, module, attr, gui=gui if s.gui is None else s.gui, args=s.args)
         )
     return eps
 
@@ -126,7 +166,7 @@ def build_archive(ctx: BuildContext) -> Path:
 
 def build_exe(ctx: BuildContext) -> Path:
     src = tree(ctx)
-    eps = app_entry_points(ctx)
+    eps = bundle_entry_points(ctx)
     doc = json.loads((src / "wheelship.json").read_text(encoding="utf-8"))
     default = next(ep for ep in eps if ep.name == doc["default_entry_point"])
     stub = ctx.launcher("gui" if default.gui else "console").read_bytes()

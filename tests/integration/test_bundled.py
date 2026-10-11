@@ -59,7 +59,9 @@ def test_layout(linux_dist: Path) -> None:
     bundle = linux_dist / f"{STEM}-linux"
     assert sorted(p.name for p in bundle.iterdir()) == [
         "cli-app",
+        "cli-app-fixed",
         "cli-app-gui",
+        "pyg",
         "python",
         "wheelship.json",
     ]
@@ -99,6 +101,21 @@ def test_runs_relocated(linux_dist: Path, tmp_path: Path) -> None:
     link = tmp_path / "cli-app"
     link.symlink_to(bundle / "cli-app")
     assert json.loads(run(link).stdout)["executable"].startswith(str(bundle))
+
+
+def test_configured_scripts(linux_dist: Path) -> None:
+    bundle = linux_dist / f"{STEM}-linux"
+    # entry = "cli_app": run as __main__ with the fixed args before the user's.
+    proc = run(bundle / "cli-app-fixed", "more")
+    assert proc.returncode == 5, proc.stderr
+    info = json.loads(proc.stdout)
+    assert info["rest"] == ["fixed", "more"]
+    assert info["argv0"].endswith("/cli_app/__main__.py")
+    assert run(bundle / "cli-app-fixed", "--exit", "0").returncode == 0  # user args win
+
+    # A dependency's script, with its fixed args.
+    proc = run(bundle / "pyg")
+    assert proc.returncode == 0 and "Pygments version" in proc.stdout, proc.stderr
 
 
 def test_boot_and_debug(linux_dist: Path) -> None:
