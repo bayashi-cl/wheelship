@@ -1,0 +1,5 @@
+# Link the C runtime statically into the Windows launchers: they must start on
+# machines without the Visual C++ Redistributable (python-build-standalone ships
+# vcruntime140.dll inside python/, which is not on the launcher's search path).
+[target.'cfg(all(windows, target_env = "msvc"))']
+rustflags = ["-C", "target-feature=+crt-static"]

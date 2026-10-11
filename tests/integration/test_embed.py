@@ -2,7 +2,7 @@
 
 Compares the embedded (``Py_Main`` from ``python3XX.dll``) and the default
 spawned process models on the same bundle. Timings and probe results go to the
-GitHub Actions step summary when available.
+GitHub Actions step summary and ``$WHEELSHIP_TEST_REPORT`` when set.
 """
 
 from __future__ import annotations
@@ -34,9 +34,10 @@ pytestmark = [
 
 def summary(text: str) -> None:
     print(text)
-    if path := os.environ.get("GITHUB_STEP_SUMMARY"):
-        with open(path, "a", encoding="utf-8") as f:
-            f.write(text + "\n")
+    for var in ("GITHUB_STEP_SUMMARY", "WHEELSHIP_TEST_REPORT"):
+        if path := os.environ.get(var):
+            with open(path, "a", encoding="utf-8") as f:
+                f.write(text + "\n")
 
 
 def run(exe: Path, *args: str, embed: bool, **env: str) -> subprocess.CompletedProcess[str]:

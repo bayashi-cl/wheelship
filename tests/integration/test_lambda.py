@@ -131,7 +131,11 @@ def test_runtime_layout(dist: Path) -> None:
 def _docker_ok() -> bool:
     if shutil.which("docker") is None:
         return False
-    return subprocess.run(["docker", "info"], capture_output=True).returncode == 0
+    # Windows runners have docker in Windows-container mode: Lambda images need Linux.
+    proc = subprocess.run(
+        ["docker", "info", "--format", "{{.OSType}}"], capture_output=True, text=True
+    )
+    return proc.returncode == 0 and proc.stdout.strip() == "linux"
 
 
 def _extract_with_modes(archive: Path, dest: Path) -> None:

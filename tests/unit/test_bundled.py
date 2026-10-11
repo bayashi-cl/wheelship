@@ -340,3 +340,13 @@ def test_resolve_link_chains_and_cycles() -> None:
     assert pbs.resolve_link(by_name["python/hard"], by_name) == "python/bin/python3.12"
     assert pbs.resolve_link(by_name["python/x"], by_name) is None
     assert pbs.resolve_link(by_name["python/dangling"], by_name) is None
+
+
+@pytest.mark.parametrize("platform", ["windows-x86_64", "windows-arm64"])
+def test_windows_launchers_link_crt_statically(platform: str) -> None:
+    """The launcher must start without the Visual C++ Redistributable."""
+    try:
+        exe = launchers.find(make_target(platform, "3.12"), "console")
+    except BuildError:
+        pytest.skip(f"no {platform} launcher built")
+    assert b"vcruntime140" not in exe.read_bytes().lower()

@@ -87,6 +87,11 @@ jobs:
       - run: uv run pytest -v
         env:
           WHEELSHIP_LAUNCHER_DIR: ${{ github.workspace }}/launchers
+          WHEELSHIP_TEST_REPORT: ${{ runner.temp }}/report.md
+      - name: Measurements
+        if: always()
+        shell: bash
+        run: cat "$RUNNER_TEMP/report.md" 2>/dev/null || echo "(none)"
 
   wheel:
     needs: launchers
