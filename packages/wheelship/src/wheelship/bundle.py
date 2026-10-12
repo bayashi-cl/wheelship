@@ -10,7 +10,7 @@ from pathlib import Path
 from . import bytecode, launchers, log, pbs, prune, sbom
 from .config import ProjectConfig, TargetConfig
 from .errors import BuildError, ConfigError, ResolveError
-from .lock import Artifact, pipreport, pylock, uv
+from .lock import Artifact, pylock, uv
 from .manifest import EntryPoint
 from .target import Target
 from .wheels import Wheel, obtain
@@ -92,42 +92,37 @@ def _builders() -> dict[str, FormatBuilder]:
     }
 
 
-def find_lock(cfg: ProjectConfig, override: Path | None) -> Path | None:
+def find_lock(cfg: ProjectConfig, override: Path | None) -> Path:
     """A ``pylock.toml``, or a ``uv.lock`` to export one from at build time."""
     if override is not None:
         return override
     if cfg.lock is not None:
         return cfg.lock
     default = cfg.root / "pylock.toml"
-    return default if default.is_file() else uv.find(cfg.root)
+    if default.is_file():
+        return default
+    found = uv.find(cfg.root)
+    if found is None:
+        raise ResolveError(
+            "no lock file found; lock with uv (`uv lock`), or create a pylock.toml "
+            "and set [tool.wheelship] lock or pass --lock"
+        )
+    return found
 
 
-def resolve(cfg: ProjectConfig, target: Target, lock: Path | None, work: Path) -> list[Artifact]:
-    if lock is not None and lock.name == uv.LOCK_NAME:
+def resolve(cfg: ProjectConfig, target: Target, lock: Path, work: Path) -> list[Artifact]:
+    if lock.name == uv.LOCK_NAME:
         shown = lock.name if lock.parent == cfg.root else lock
         log.info(f"resolving from {shown} (uv export) for {target}")
         # extras and groups are already applied by uv (see lock.uv).
         exported, base = uv.export(cfg, work / "uv-export")
         artifacts = pylock.select(exported, target, base=base)
-    elif lock is not None:
+    else:
         log.info(f"resolving from {lock.name} for {target}")
         artifacts = pylock.select(lock, target, extras=cfg.extras, groups=cfg.groups)
-    else:
-        log.warn(
-            "no lock file; resolving with pip for this build only (not reproducible). "
-            "Lock with uv (`uv lock`) or create a pylock.toml (`pip lock`)."
-        )
-        if cfg.dependencies is None:
-            raise ResolveError("[project].dependencies is dynamic; a lock file is required")
-        reqs = list(cfg.dependencies)
-        for extra in cfg.extras:
-            if extra not in cfg.optional_dependencies:
-                raise ConfigError(f"unknown extra {extra!r}")
-            reqs += cfg.optional_dependencies[extra]
-        artifacts = pipreport.resolve(target, reqs)
 
     if not any(a.name == cfg.name for a in artifacts):
-        # e.g. `uv export --no-emit-project`, or the pip fallback.
+        # e.g. `uv export --no-emit-project`.
         artifacts.append(Artifact(cfg.name, cfg.version, "directory", path=cfg.root))
     for a in artifacts:
         log.debug(a.describe())

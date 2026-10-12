@@ -1,4 +1,4 @@
-"""prune, reproducible zip, pip report parsing, wheel installation."""
+"""prune, reproducible zip, wheel installation."""
 
 from __future__ import annotations
 
@@ -11,7 +11,7 @@ from tests.conftest import MakeWheel, sha256
 from wheelship import fetch, prune, reproducible
 from wheelship.errors import BuildError, FetchError
 from wheelship.install import flat_scheme, install_wheels
-from wheelship.lock import Artifact, pipreport
+from wheelship.lock import Artifact
 from wheelship.target import make_target
 from wheelship.wheels import Wheel, is_compatible, obtain
 
@@ -69,41 +69,6 @@ def test_zip_is_deterministic_with_permissions(tmp_path: Path, monkeypatch) -> N
     reproducible.write_zip(root, first)
     with zipfile.ZipFile(first) as zf:
         assert zf.infolist()[0].date_time[0] == 2023
-
-
-def test_pip_report_parsing() -> None:
-    report = {
-        "version": "1",
-        "install": [
-            {
-                "metadata": {"name": "Foo_Bar", "version": "1.2"},
-                "download_info": {
-                    "url": "https://files.example/foo_bar-1.2-py3-none-any.whl",
-                    "archive_info": {"hashes": {"sha256": "ab"}},
-                },
-            },
-            {
-                "metadata": {"name": "baz", "version": "0.1"},
-                "download_info": {
-                    "url": "https://files.example/baz-0.1.tar.gz",
-                    "archive_info": {"hash": "sha256=cd"},
-                },
-            },
-        ],
-    }
-    a, b = pipreport.parse_report(report)
-    assert (a.name, a.kind, a.filename, dict(a.hashes)) == (
-        "foo-bar", "wheel", "foo_bar-1.2-py3-none-any.whl", {"sha256": "ab"}
-    )  # fmt: skip
-    assert (b.kind, dict(b.hashes)) == ("sdist", {"sha256": "cd"})
-
-
-def test_pip_command_targets_platform(tmp_path: Path) -> None:
-    cmd = pipreport.pip_command(make_target("lambda-arm64", "3.12"), ["attrs"], tmp_path / "r")
-    assert "--dry-run" in cmd and "--only-binary=:all:" in cmd
-    assert cmd[cmd.index("--python-version") + 1] == "3.12"
-    assert cmd[cmd.index("--abi") + 1] == "cp312"
-    assert "manylinux_2_34_aarch64" in cmd and cmd[-1] == "attrs"
 
 
 def test_obtain_verifies_hash_and_tags(tmp_path: Path, make_wheel: MakeWheel) -> None:

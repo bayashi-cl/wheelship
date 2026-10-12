@@ -47,8 +47,6 @@ handler = "my_app.h:handler"
     )
     assert cfg.name == "my-app"
     assert cfg.lock == tmp_path / "pylock.toml"
-    assert cfg.dependencies == ("attrs",)
-    assert cfg.optional_dependencies == {"fast": ("orjson",)}
     fn = cfg.target("fn")
     assert fn.interpreter == "system"  # lambda default
     assert fn.target.python[:2] == (3, 12)
@@ -99,10 +97,9 @@ def test_errors(extra: str, message: str, tmp_path: Path) -> None:
         parse(extra, tmp_path)
 
 
-def test_dynamic_dependencies(tmp_path: Path) -> None:
+def test_dynamic_version(tmp_path: Path) -> None:
     data = tomllib.loads('[project]\nname="x"\ndynamic=["dependencies", "version"]')
     cfg = config.parse(data, tmp_path)
-    assert cfg.dependencies is None
     assert cfg.version is None
 
 

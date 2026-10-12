@@ -1,5 +1,4 @@
-"""Resolution inputs: PEP 751 ``pylock.toml`` (preferred, possibly exported from ``uv.lock``)
-or a pip installation report."""
+"""Resolution input: a PEP 751 ``pylock.toml``, possibly exported from ``uv.lock``."""
 
 from __future__ import annotations
 

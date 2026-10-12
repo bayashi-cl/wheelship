@@ -41,6 +41,12 @@ def test_pylock_next_to_project_wins(tmp_path: Path) -> None:
     assert bundle.find_lock(config.load(tmp_path), None) == tmp_path / "pylock.toml"
 
 
+def test_no_lock_is_an_error(tmp_path: Path) -> None:
+    (tmp_path / "pyproject.toml").write_text('[project]\nname = "x"\n')
+    with pytest.raises(ResolveError, match="no lock file found"):
+        bundle.find_lock(config.load(tmp_path), None)
+
+
 def test_export_args() -> None:
     cfg = config.load(MEMBER)
     assert uv.export_args(cfg) == [

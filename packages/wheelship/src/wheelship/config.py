@@ -56,9 +56,6 @@ class ProjectConfig:
     name: NormalizedName
     version: str | None
     requires_python: SpecifierSet | None
-    dependencies: tuple[str, ...] | None
-    """``[project].dependencies``; None when declared dynamic."""
-    optional_dependencies: dict[str, tuple[str, ...]]
     lock: Path | None
     python: str | None
     extras: tuple[str, ...]
@@ -128,18 +125,6 @@ def parse(data: dict[str, Any], root: Path) -> ProjectConfig:
         except InvalidSpecifier as e:
             raise ConfigError(f"invalid [project].requires-python: {e}") from None
 
-    dynamic = set(_strs(project.get("dynamic", []), "project.dynamic"))
-    dependencies = (
-        None
-        if "dependencies" in dynamic
-        else tuple(_strs(project.get("dependencies", []), "project.dependencies"))
-    )
-    optional_table = _table(project, "optional-dependencies", "project", required=False)
-    optional = {
-        extra: tuple(_strs(reqs, f"project.optional-dependencies.{extra}"))
-        for extra, reqs in optional_table.items()
-    }
-
     tool = _table(data.get("tool", {}), "wheelship", "tool", required=False)
     _check_keys(tool, _TOOL_KEYS, "[tool.wheelship]")
 
@@ -172,8 +157,6 @@ def parse(data: dict[str, Any], root: Path) -> ProjectConfig:
         name=name,
         version=version,
         requires_python=requires_python,
-        dependencies=dependencies,
-        optional_dependencies=optional,
         lock=(root / _str(tool["lock"], "tool.wheelship.lock")) if "lock" in tool else None,
         python=python,
         extras=tuple(_strs(tool.get("extras", []), "tool.wheelship.extras")),
