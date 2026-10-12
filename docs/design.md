@@ -41,7 +41,6 @@ PyInstaller と PEX の中間に位置づける。
 | ツール設定 | `[tool.wheelship]` | 独自設定はここだけに置く |
 | アプリの wheel 化 | PEP 517 / 518 | `build` パッケージ（または `pyproject_hooks`）で wheel を作る |
 | ロックファイル | **PEP 751 `pylock.toml`** | 入力の主形式。uv プロジェクトはビルド時に `uv.lock` から `uv export` で生成する。それ以外は `pip lock` などで作った `pylock.toml` を置く |
-| 解決レポート（代替） | pip installation report（JSON） | ロックが無い場合、`pip install --dry-run --report` をターゲット指定付きで実行して解決する |
 | 互換性判定 | wheel のタグ（PEP 425 / 600 manylinux / 656 musllinux）、PEP 508 マーカー | `packaging.tags` と `packaging.markers` を使い、**ターゲット環境**に対して評価する（ホストではない） |
 | インストール | Binary distribution format（PEP 427）、RECORD | `installer` ライブラリで sysconfig スキームへ展開する |
 | エントリーポイント | Entry points 仕様（`console_scripts` / `gui_scripts`） | `[tool.wheelship.scripts]` の `script` で参照する名前を引く（§8.1） |
@@ -217,7 +216,7 @@ myapp/
      1. `--lock` / `[tool.wheelship].lock`
      2. `pyproject.toml` と同じディレクトリの `pylock.toml`
      3. プロジェクトのディレクトリから親へたどって最初に見つかる `uv.lock`（workspace のルート）
-     4. どれも無ければ代替（下記の 2.）
+     4. どれも無ければエラーにする（下記の 2.）
    - `uv.lock` のときは、プロジェクトのディレクトリで `uv export --format pylock.toml --quiet --no-default-groups [--group G] [--extra E] --locked <uv-export-args>` を実行し、標準出力を作業ディレクトリに書いて読む。
      - workspace のメンバーは、カレントディレクトリから uv が自動で選ぶ。`--package` は付けない。
      - `--locked` を付けるので `uv.lock` は書き換えない。`pyproject.toml` とずれていればエラーにする。`uv-export-args` に `--frozen` があるときは `--locked` を付けない。
@@ -225,11 +224,9 @@ myapp/
    - エクスポート中の相対パスの基準は uv のバージョンで変わる。uv 0.12.19 までは workspace のルート（`uv.lock` のあるディレクトリ）が基準で、`-o` で出力先を変えても同じ。uv 0.12.20 からは PEP 751 のとおり出力ファイルのディレクトリが基準で、標準出力に書いたときは実行ディレクトリが基準になる。そのため、アプリ自身の directory エントリが `pyproject.toml` のディレクトリを指すことを手がかりに、エクスポート結果から基準を逆算する（`lock.uv.path_base`）。エクスポートにアプリが含まれないとき（`--no-emit-project`）は、uv 0.12.20 以降の挙動を前提にする。
    - uv は使う `uv.lock` を自分で決める。`lock` / `--lock` で `uv.lock` を指定した場合、それは「uv からエクスポートする」という意味になり、ファイルの場所そのものは使わない。
    - エクスポートの方法を完全に自分で決めたいとき（uv を使わない、独自のパイプラインがある）は、自分で `pylock.toml` を作って 1. で指定する。任意のシェルコマンドを設定で受け付けることはしない。出力先、パスの基準、extras/groups との整合を wheelship が保証できなくなるため。
-2. **代替**: ロックが無い場合、Target ごとに次を実行してレポートを入力にする。
-   `pip install --dry-run --ignore-installed --report - --only-binary=:all: --platform <tags> --python-version <v> --implementation cp --abi <abi> -r ...`
-   この場合、ロックは使わないので再現性は保証しないと明示する。
+2. **ロックが無い場合はエラーにする。** ロックなしで pip などに解決させる経路は持たない。ロックの置き忘れで再現性の保証が黙って外れること、ビルドする環境の pip のバージョンや設定に結果が左右されることを避けるため。
 
-wheelship 自身はリゾルバを持たない。解決は標準ツール（uv / pip）に任せる。
+wheelship 自身はリゾルバを持たない。解決は標準ツール（uv など、`pylock.toml` を作れるもの）に任せる。
 
 ### 6.2 wheel の選択
 
@@ -521,8 +518,7 @@ packages/wheelship/src/wheelship/
 ├── lock/
 │   ├── __init__.py   # Artifact（選択結果の共通表現）
 │   ├── pylock.py     # PEP 751: packaging.pylock.Pylock.select() に Target の環境とタグを渡す
-│   ├── uv.py         # uv.lock の探索と、ビルド時の uv export（PEP 751 への変換）
-│   └── pipreport.py  # pip installation report（代替経路）
+│   └── uv.py         # uv.lock の探索と、ビルド時の uv export（PEP 751 への変換）
 ├── wheels.py         # Artifact → ターゲット互換の wheel（取得 / find-links / PEP 517 ビルド）
 ├── fetch.py          # ダウンロード、ハッシュ検証、キャッシュ
 ├── pbs.py            # PBS リリース解決・取得・後処理
@@ -568,6 +564,6 @@ packages/wheelship/src/wheelship/
 2. **ランチャの言語**: Rust。
 3. **bundled モードのインストール先**: PBS 自身の site-packages。
 4. **pip**: 同梱しない（PBS から `pip` / `ensurepip` を常に削除する）。
-5. **ロックが無い場合**: §6.1 のとおり、pip installation report を使う経路を許す（再現性は保証しないと警告を出す）。
+5. **ロックが無い場合**: エラーにする（§6.1）。ロックなしで pip に解決させる代替経路は持たない。
 6. **musl / Alpine**: 現時点では対象外。
 7. **リポジトリ構成**: トップに cargo workspace と uv workspace を併存させる（§11.1）。
