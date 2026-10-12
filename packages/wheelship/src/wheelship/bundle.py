@@ -11,6 +11,7 @@ from . import bytecode, launchers, log, pbs, prune, sbom
 from .config import ProjectConfig, TargetConfig
 from .errors import BuildError, ConfigError, ResolveError
 from .lock import Artifact, pipreport, pylock, uv
+from .manifest import EntryPoint
 from .target import Target
 from .wheels import Wheel, obtain
 
@@ -28,6 +29,8 @@ class BuildContext:
     """Launcher kind ("console"/"gui") -> binary placed into an artifact (for the SBOM)."""
     tree_root: Path | None = None
     """Assembled bundle tree, shared by the dir/archive/exe/pyz formats of one target."""
+    entry_points: list[EntryPoint] | None = None
+    """Resolved [tool.wheelship.scripts] (see ``formats.package.bundle_entry_points``)."""
 
     @property
     def target(self) -> Target:

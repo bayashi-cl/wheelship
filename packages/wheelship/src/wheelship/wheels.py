@@ -49,7 +49,10 @@ def entry_points(wheel: Path) -> list[EntryPoint]:
             text = source.read_dist_info("entry_points.txt")
         except (KeyError, FileNotFoundError):
             return []
-    return [EntryPoint(*ep) for ep in parse_entrypoints(text)]
+    return [
+        EntryPoint(name, module, attr, gui=section == "gui")
+        for name, module, attr, section in parse_entrypoints(text)
+    ]
 
 
 def is_compatible(filename: str, target: Target) -> bool:

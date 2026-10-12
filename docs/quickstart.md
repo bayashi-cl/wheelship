@@ -46,7 +46,7 @@ wheelship --version
 
 ## Create a project
 
-Any project with `[project.scripts]` (or `gui-scripts`) works. Start a new one:
+Any Python project packaged with a `[build-system]` works. Start a new one:
 
 ```sh
 uv init --package --python 3.13 hello
@@ -66,7 +66,7 @@ def main() -> None:
     print(f"[bold green]Hello[/] from Python {sys.version.split()[0]} at {sys.executable}")
 ```
 
-`uv init --package` already declared the entry point in `pyproject.toml`:
+`uv init --package` already declared a console script in `pyproject.toml`:
 
 ```toml
 [project.scripts]
@@ -81,11 +81,27 @@ Append to `pyproject.toml`:
 [tool.wheelship]
 python = "3.13"            # must satisfy requires-python
 
+[tool.wheelship.scripts]
+hello = { script = "hello" }
+
 [[tool.wheelship.target]]
 name = "linux"
 platform = "linux-x86_64"
 formats = ["exe", "archive"]
 ```
+
+Only the entries of `[tool.wheelship.scripts]` become launchers in the bundle; the key
+is the launcher's name. `script` refers to a console script of the application or of
+any dependency, `entry` to a `module:function` or a module to run like `python -m`, and
+`args` are prepended to the user's arguments. For example, a FastAPI server:
+
+```toml
+[tool.wheelship.scripts]
+server = { script = "uvicorn", args = ["hello.api:app", "--host", "0.0.0.0"] }
+```
+
+With more than one script, set `default-script` in `[tool.wheelship]`: it runs when the
+launcher is renamed to a name that matches none of them (as the single-file `exe` is).
 
 Each `[[tool.wheelship.target]]` is one platform to build for. The interpreter defaults
 to `bundled` (python-build-standalone).

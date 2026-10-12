@@ -133,10 +133,31 @@ def test_system_interpreter_bundles(linux_dist: Path, tmp_path: Path, kind: str)
     assert info["isolated"] == (0 if kind == "pyz" else 1)
 
 
+@pytest.mark.parametrize("kind", ["dir", "pyz", "exe"])
+def test_system_configured_scripts(linux_dist: Path, tmp_path: Path, kind: str) -> None:
+    python = _python312()
+    src = {
+        "dir": linux_dist / f"{STEM}-linux-system" / "cli-app-fixed",
+        "pyz": linux_dist / f"{STEM}-linux-system.pyz",
+        "exe": linux_dist / f"{STEM}-linux-system.bin",
+    }[kind]
+    exe = src
+    if kind != "dir":  # busybox style: the name selects the entry point
+        exe = tmp_path / ("cli-app-fixed.pyz" if kind == "pyz" else "cli-app-fixed")
+        shutil.copy2(src, exe)
+    env = {"PYTHON": python} if kind == "pyz" else {"WHEELSHIP_PYTHON": python}
+    proc = run(exe, "more", cache=tmp_path / "cache", **env)
+    assert proc.returncode == 5, proc.stderr
+    info = json.loads(proc.stdout)
+    assert info["rest"] == ["fixed", "more"]
+    assert info["argv0"].endswith("/cli_app/__main__.py")
+
+
 def test_system_bundle_layout(linux_dist: Path) -> None:
     root = linux_dist / f"{STEM}-linux-system"
     assert sorted(p.name for p in root.iterdir()) == [
-        "_wheelship_boot.py", "cli-app", "cli-app-gui", "lib", "wheelship.json",
+        "_wheelship_boot.py", "cli-app", "cli-app-fixed", "cli-app-gui", "lib", "pyg",
+        "wheelship.json",
     ]  # fmt: skip
     assert (root / "lib" / "markupsafe" / "_speedups.cpython-312-x86_64-linux-gnu.so").is_file()
     assert not list(root.glob("lib/bin")) and not (root / "python").exists()

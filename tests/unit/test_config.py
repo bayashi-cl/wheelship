@@ -109,3 +109,59 @@ def test_dynamic_dependencies(tmp_path: Path) -> None:
 def test_load_missing(tmp_path: Path) -> None:
     with pytest.raises(ConfigError, match="not found"):
         config.load(tmp_path)
+
+
+def test_scripts(tmp_path: Path) -> None:
+    cfg = parse(
+        """
+[tool.wheelship]
+default-script = "server"
+[tool.wheelship.scripts]
+server = { script = "uvicorn", args = ["my_app.api:app", "--host", "0.0.0.0"] }
+shell = { entry = "IPython" }
+gui = { entry = "my_app.gui:main", gui = true }
+""",
+        tmp_path,
+    )
+    assert cfg.default_script == "server"
+    server, shell, gui = cfg.scripts
+    assert server == config.ScriptConfig(
+        "server", "uvicorn", None, ("my_app.api:app", "--host", "0.0.0.0"), None
+    )
+    assert (shell.entry, shell.args, shell.gui) == ("IPython", (), None)
+    assert (gui.entry, gui.gui) == ("my_app.gui:main", True)
+
+
+def test_single_script_is_the_default(tmp_path: Path) -> None:
+    cfg = parse('[tool.wheelship.scripts]\napp = { script = "my-app" }\n', tmp_path)
+    assert cfg.default_script == "app"
+    empty = parse("", tmp_path)
+    assert empty.scripts == () and empty.default_script is None
+
+
+@pytest.mark.parametrize(
+    ("extra", "message"),
+    [
+        ('a = { script = "a" }\nb = { script = "b" }', "default-script is required"),
+        ('a = { script = "a", entry = "a" }', "exactly one of 'script' or 'entry'"),
+        ("a = { args = [] }", "exactly one of 'script' or 'entry'"),
+        ('a = { entry = "a.b:c:d" }', "entry must be 'module' or 'module:attr'"),
+        ('a = { entry = "a b" }', "entry must be 'module' or 'module:attr'"),
+        ('a = { script = "a", args = "x" }', "must be an array"),
+        ('a = { script = "a", gui = "yes" }', "gui must be true or false"),
+        ('a = { script = "a", module = "a" }', "unknown key"),
+        ('a = "pkg:main"', "must be a table"),
+        ('"../a" = { script = "a" }', "not a valid launcher name"),
+    ],
+)
+def test_script_errors(tmp_path: Path, extra: str, message: str) -> None:
+    with pytest.raises(ConfigError, match=message):
+        parse(f"[tool.wheelship.scripts]\n{extra}\n", tmp_path)
+
+
+def test_default_script_must_exist(tmp_path: Path) -> None:
+    extra = (
+        '[tool.wheelship]\ndefault-script = "b"\n[tool.wheelship.scripts]\na = { script = "a" }\n'
+    )
+    with pytest.raises(ConfigError, match="'b' is not in"):
+        parse(extra, tmp_path)

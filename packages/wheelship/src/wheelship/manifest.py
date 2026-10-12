@@ -16,39 +16,43 @@ SCHEMA = 1
 class EntryPoint:
     name: str
     module: str
-    attr: str
-    section: Literal["console", "gui"]
+    attr: str | None
+    """None: run ``module`` as ``__main__``, like ``python -m``."""
+    gui: bool = False
+    args: tuple[str, ...] = ()
+    """Inserted before the user's arguments."""
 
     @property
-    def gui(self) -> bool:
-        return self.section == "gui"
+    def value(self) -> str:
+        return self.module if self.attr is None else f"{self.module}:{self.attr}"
 
 
-def entry_code(module: str, attr: str, *, pop_argv0: bool) -> str:
+def entry_code(module: str, attr: str | None, *, pop_argv0: bool, args: Sequence[str] = ()) -> str:
     """Python source that imports and calls ``module:attr``.
 
     With ``pop_argv0`` the code is meant for ``python -c CODE <exe> args...``:
     dropping the ``-c`` placeholder makes ``sys.argv[0]`` the launcher path, as
-    with a regular console script.
+    with a regular console script. ``args`` are inserted before the user's
+    arguments. Without ``attr`` the module runs as ``__main__`` (``python -m``),
+    which sets ``sys.argv[0]`` to the module's file.
     """
-    for dotted in (module, attr):
+    for dotted in (module, attr or "_"):
         if not all(part.isidentifier() for part in dotted.split(".")):
             raise ValueError(f"invalid entry point {module}:{attr}")
-    head = attr.split(".", 1)[0]
     lines = ["import sys"]
     if pop_argv0:
         lines.append("sys.argv.pop(0)")
-    lines += [f"from {module} import {head}", f"sys.exit({attr}())"]
+    if args:
+        lines.append(f"sys.argv[1:1] = {list(args)!r}")
+    if attr is None:
+        lines += [
+            "import runpy",
+            f"runpy.run_module({module!r}, run_name='__main__', alter_sys=True)",
+        ]
+    else:
+        head = attr.split(".", 1)[0]
+        lines += [f"from {module} import {head}", f"sys.exit({attr}())"]
     return "; ".join(lines)
-
-
-def default_entry_point(app_name: str, entry_points: Sequence[EntryPoint]) -> str | None:
-    names = [ep.name for ep in entry_points]
-    if app_name in names:
-        return app_name
-    console = [ep.name for ep in entry_points if not ep.gui]
-    candidates = console or names
-    return candidates[0] if candidates else None
 
 
 BOOT_SCRIPT = "_wheelship_boot.py"
@@ -77,6 +81,7 @@ def build(
     mode: Literal["bundled", "system"],
     python_flags: Sequence[str],
     entry_points: Sequence[EntryPoint],
+    default_entry_point: str | None,
     wheelship_version: str,
     interpreter: str | None = None,
     gui_interpreter: str | None = None,
@@ -85,9 +90,10 @@ def build(
     """The manifest document.
 
     bundled: ``interpreter``/``gui_interpreter`` are paths relative to the root;
-    entry points run generated ``-c`` code. system: the launcher finds an
-    interpreter on ``PATH`` and runs the boot script, which checks the ABI and
-    adds ``lib/`` to ``sys.path``. ``library`` (bundled, Windows) is the
+    entry points run generated ``-c`` code, with ``app_args`` built in. system:
+    the launcher finds an interpreter on ``PATH`` and runs the boot script,
+    which checks the ABI, adds ``lib/`` to ``sys.path`` and inserts
+    ``app_args`` before the user's arguments. ``library`` (bundled, Windows) is the
     ``python3XX.dll`` the launcher loads instead of spawning the interpreter
     when ``WHEELSHIP_EMBED=1`` (experimental).
     """
@@ -108,7 +114,11 @@ def build(
 
     def args(ep: EntryPoint) -> list[str]:
         if mode == "bundled":
-            return [*python_flags, "-c", entry_code(ep.module, ep.attr, pop_argv0=True)]
+            return [
+                *python_flags,
+                "-c",
+                entry_code(ep.module, ep.attr, pop_argv0=True, args=ep.args),
+            ]
         # -S: the interpreter's own site-packages (system or venv) stay out of
         # sys.path; the boot script adds only the bundle's lib/.
         no_site = [] if "-S" in python_flags else ["-S"]
@@ -119,10 +129,15 @@ def build(
         "app": {"name": app_name, "version": app_version},
         "interpreter": interp,
         "entry_points": {
-            ep.name: {"args": args(ep), "gui": ep.gui, "value": f"{ep.module}:{ep.attr}"}
+            ep.name: {
+                "args": args(ep),
+                "app_args": list(ep.args),
+                "gui": ep.gui,
+                "value": ep.value,
+            }
             for ep in entry_points
         },
-        "default_entry_point": default_entry_point(app_name, entry_points),
+        "default_entry_point": default_entry_point,
         "target": {"name": str(target), "platform": target.platform_name},
         "build": {"tool": f"wheelship {wheelship_version}"},
     }
